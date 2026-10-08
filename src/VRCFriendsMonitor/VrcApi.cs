@@ -40,7 +40,7 @@ sealed class VrcApi : IDisposable
         if (path == "auth/user" && response.StatusCode == HttpStatusCode.Unauthorized && AuthChallenge.Required(result)) return result;
         if (!response.IsSuccessStatusCode)
         {
-            string message = response.StatusCode switch
+            string message = AuthFailure.Message(path, response.StatusCode, result, basic != null) ?? response.StatusCode switch
             {
                 HttpStatusCode.Unauthorized => "登录已失效，或账号密码 / 验证码不正确，请重新登录。",
                 HttpStatusCode.Forbidden => "服务器拒绝访问，请检查账号或稍后重试。",

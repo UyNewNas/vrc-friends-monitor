@@ -13,6 +13,9 @@ function Invoke-AppCheck([string]$Mode, [string]$OutputPath) {
 $report = Join-Path $testRoot 'self-test.txt'
 Invoke-AppCheck '--self-test' $report
 Get-Content -LiteralPath $report
+$loginReport = Join-Path $testRoot 'login-flow-test.txt'
+Invoke-AppCheck '--login-flow-test' $loginReport
+Get-Content -LiteralPath $loginReport
 $browserReport = Join-Path $testRoot 'browser-test.txt'
 Invoke-AppCheck '--browser-smoke' $browserReport
 Get-Content -LiteralPath $browserReport

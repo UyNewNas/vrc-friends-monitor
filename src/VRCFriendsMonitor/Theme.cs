@@ -22,15 +22,19 @@ sealed class LoginDialog : Form
     readonly Button login, browser, cancel;
     readonly CancellationTokenSource lifetime = new();
     CancellationTokenSource? attempt;
+    readonly Func<VrcApi> createApi;
+    readonly Action<string> saveSession;
     public VrcApi? Api { get; private set; }
     public JsonElementResult? User { get; private set; }
-    public LoginDialog()
+    internal bool SilentTest;
+    public LoginDialog(Func<VrcApi>? createApi = null, Action<string>? saveSession = null)
     {
+        this.createApi = createApi ?? (() => new VrcApi()); this.saveSession = saveSession ?? Storage.SaveSession;
         Theme.Style(this); Text = $"登录 VRChat · {AppVersion.Display}"; ClientSize = new Size(490, 440); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = MinimizeBox = false; StartPosition = FormStartPosition.CenterParent;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(26), ColumnCount = 1, RowCount = 9 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.Controls.Add(new Label { Text = "使用 VRChat 账号登录", AutoSize = true, Font = new Font(Font, FontStyle.Bold) });
-        layout.Controls.Add(new Label { Text = "用户名（不是显示名称）", AutoSize = true });
+        layout.Controls.Add(new Label { Text = "注册用户名或邮箱（不是显示名称）", AutoSize = true });
         Theme.Input(username); Theme.Input(password); username.Dock = DockStyle.Top; layout.Controls.Add(username);
         layout.Controls.Add(new Label { Text = "密码", AutoSize = true });
         password.Dock = DockStyle.Top; layout.Controls.Add(password);
@@ -63,21 +67,25 @@ sealed class LoginDialog : Form
             }
             else
             {
-                candidate = new();
+                candidate = createApi();
                 user = await candidate.Login(username.Text.Trim(), password.Text, pending.Token); password.Clear();
+                string verificationError = "";
                 while (AuthChallenge.Required(user))
                 {
                     var methods = AuthChallenge.Methods(user);
                     if (methods.Length == 0) throw new InvalidOperationException("此验证方式暂不支持，请尝试浏览器登录。");
                     pending.Token.ThrowIfCancellationRequested();
-                    using var code = new CodeDialog(methods);
+                    feedback.Text = "账号已验证，等待输入两步验证码…";
+                    using var code = new CodeDialog(methods, verificationError);
+                    if (SilentTest) code.Opacity = 0;
                     if (code.ShowDialog(this) != DialogResult.OK) { feedback.Text = "登录已取消。"; return; }
                     feedback.Text = "正在验证…";
                     try { await candidate.Verify(code.Method, code.Code, pending.Token); }
-                    catch (Exception ex) when (ex is InvalidOperationException || ex is ApiException ae && ae.Status is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.BadRequest)
+                    catch (Exception ex) when (ex is InvalidOperationException || ex is ApiException ae && ae.Status is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.BadRequest && !ae.Message.StartsWith("验证会话已失效", StringComparison.Ordinal))
                     {
                         pending.Token.ThrowIfCancellationRequested();
-                        if (!IsDisposed) MessageBox.Show(this, "验证码未通过，请重新输入；也可以选择恢复码或取消登录。", "两步验证");
+                        feedback.Text = ex.Message;
+                        verificationError = ex.Message;
                         continue;
                     }
                     user = await candidate.Request("auth/user", pending.Token);
@@ -86,7 +94,7 @@ sealed class LoginDialog : Form
             pending.Token.ThrowIfCancellationRequested();
             var id = PresenceTracker.Str(user, "id");
             if (id.Length == 0 || AuthChallenge.Required(user)) throw new InvalidOperationException("登录未完成，请重试。");
-            Storage.SaveSession(candidate.Session); Api = candidate; candidate = null;
+            saveSession(candidate.Session); Api = candidate; candidate = null;
             User = new(id, PresenceTracker.Str(user, "displayName")); DialogResult = DialogResult.OK; Close();
         }
         catch (OperationCanceledException) { if (!IsDisposed) feedback.Text = pending.IsCancellationRequested ? "登录已取消。" : "登录等待超时，请重试。"; }
@@ -97,6 +105,9 @@ sealed class LoginDialog : Form
             if (!IsDisposed) { password.Clear(); login.Enabled = browser.Enabled = username.Enabled = password.Enabled = true; cancel.Enabled = false; }
         }
     }
+    internal string Feedback => feedback.Text;
+    internal Task TestAccountLogin()
+    { username.Text = "synthetic-user"; password.Text = "synthetic-password"; return SignIn(false); }
 }
 record JsonElementResult(string Id, string Name);
 sealed class CodeDialog : Form
@@ -107,20 +118,23 @@ sealed class CodeDialog : Form
     public string Code => code.Text.Trim();
     public string Method => methods[method.SelectedIndex];
     public CodeDialog(string type) : this([type]) { }
-    public CodeDialog(string[] types)
+    public CodeDialog(string[] types, string? error = null)
     {
         methods = types;
-        Theme.Style(this); Text = "两步验证"; ClientSize = new Size(395, 240); FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = MinimizeBox = false;
+        Theme.Style(this); Text = "两步验证"; ClientSize = new Size(395, error == null || error.Length == 0 ? 240 : 290); FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent; MaximizeBox = MinimizeBox = false;
         var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(22), FlowDirection = FlowDirection.TopDown };
         foreach (var type in methods) method.Items.Add(type switch { "emailotp" => "邮箱验证码", "otp" => "一次性恢复码", _ => "身份验证器验证码" });
         var hint = new Label { AutoSize = true, MaximumSize = new Size(345, 0), Margin = new Padding(3, 8, 3, 8) };
         method.SelectedIndexChanged += (_, _) => { code.Clear(); hint.Text = Method switch { "emailotp" => "输入 VRChat 发到邮箱的验证码", "otp" => "输入 VRChat 账号设置中生成的未使用恢复码", _ => "输入身份验证器中的六位验证码" }; };
         method.SelectedIndex = 0; layout.Controls.Add(method); layout.Controls.Add(hint);
         Theme.Input(code); code.Width = 345; layout.Controls.Add(code);
+        if (!string.IsNullOrEmpty(error)) layout.Controls.Add(new Label { Text = error, AutoSize = true, MaximumSize = new Size(345, 0), ForeColor = Color.Salmon });
         var actions = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 12, 0, 0) };
         var ok = Theme.Button("验证", (_, _) => { if (Code.Length > 0) DialogResult = DialogResult.OK; });
         var cancel = Theme.Button("取消", (_, _) => DialogResult = DialogResult.Cancel);
         actions.Controls.AddRange([ok, cancel]); layout.Controls.Add(actions); Controls.Add(layout); AcceptButton = ok; CancelButton = cancel;
-        Shown += (_, _) => code.Focus();
+        Shown += (_, _) => { Activate(); BringToFront(); code.Focus(); };
     }
+    internal void TestSubmit(string type, string value)
+    { method.SelectedIndex = Array.IndexOf(methods, type); code.Text = value; ((Button)AcceptButton!).PerformClick(); }
 }

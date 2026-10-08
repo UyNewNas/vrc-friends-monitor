@@ -6,6 +6,7 @@ static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--login-flow-test")) { LoginFlowTest.Run(args.Last()); return; }
         if (args.Contains("--browser-smoke")) { BrowserLogin.SmokeTest(args.Last()); return; }
         if (args.Contains("--self-test")) { SelfTest.Run(args.Last()); return; }
         if (args.Contains("--render-preview"))
