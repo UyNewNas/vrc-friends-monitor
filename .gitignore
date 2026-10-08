@@ -1,0 +1,34 @@
+# Build and test outputs
+**/bin/
+**/obj/
+artifacts/
+.build-home/
+*.zip
+*.exe
+*.dll
+*.pdb
+*.log
+*.tmp
+test-results.txt
+log-test-artifacts/
+
+# Local app data and credentials must never be committed
+logs/
+settings.json
+session.bin
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+*.key
+
+# IDE and OS metadata
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
+.DS_Store
