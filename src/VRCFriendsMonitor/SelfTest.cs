@@ -37,6 +37,9 @@ static class SelfTest
             var restored = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings))!;
             Check(restored.Accounts["account-A"]["u"].Online && !restored.Accounts["account-A"]["u"].Offline && restored.Accounts["account-B"].Count == 0, "independent switches and account separation persist");
             ApiTests(Check).GetAwaiter().GetResult();
+            Check(ConnectionFailure.Code(new IOException("authToken=synthetic-private")) == "IOException", "connection diagnostics exclude exception text and authentication URLs");
+            Check(ConnectionFailure.Describe("SyncFriends", new InvalidOperationException()).StartsWith("好友列表加载失败"), "UI or data failures identify the friend-list stage instead of reporting an outage");
+            Check(ConnectionFailure.Describe("ConnectSocket", new System.Net.WebSockets.WebSocketException(), 403).Contains("HTTP 403"), "WebSocket handshake rejection displays only its safe HTTP status");
             LogTests(Check, output);
             File.WriteAllLines(output, results); Environment.ExitCode = 0;
         }

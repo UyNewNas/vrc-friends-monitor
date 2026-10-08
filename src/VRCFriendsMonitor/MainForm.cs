@@ -122,7 +122,8 @@ sealed class MainForm : Form
     }
     async Task RestoreSession()
     {
-        var session = Storage.LoadSession(); if (session == null) return;
+        var session = Storage.LoadSession(); if (session == null) { ConnectionFailure.Report("NoSavedSession"); return; }
+        ConnectionFailure.Report("SessionRestore");
         sessionBusy = true; login.Enabled = false; status.Text = "正在恢复登录…";
         var saved = new VrcApi(session);
         try
@@ -131,7 +132,7 @@ sealed class MainForm : Form
             if (id.Length == 0) throw new InvalidOperationException();
             api = saved; accountId = id; login.Text = "退出登录"; StartMonitor();
         }
-        catch { saved.Dispose(); status.Text = "无法恢复登录。请检查网络，或点击登录 VRChat。"; }
+        catch (Exception ex) { saved.Dispose(); ConnectionFailure.Report("SessionRestore", ex); status.Text = ConnectionFailure.Describe("Session", ex) + " 请重新登录或稍后重试。"; }
         finally { sessionBusy = false; login.Enabled = true; }
     }
     async Task ChangeAccount()

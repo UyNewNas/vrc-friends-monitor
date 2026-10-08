@@ -6,6 +6,13 @@ static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--connection-check"))
+        {
+            var saved = Storage.LoadSession();
+            if (saved == null) File.WriteAllText(args.Last(), "No saved session.");
+            else { using var api = new VrcApi(saved); api.CheckConnection(args.Last()).GetAwaiter().GetResult(); }
+            return;
+        }
         if (args.Contains("--login-flow-test")) { LoginFlowTest.Run(args.Last()); return; }
         if (args.Contains("--browser-smoke")) { BrowserLogin.SmokeTest(args.Last()); return; }
         if (args.Contains("--self-test")) { SelfTest.Run(args.Last()); return; }

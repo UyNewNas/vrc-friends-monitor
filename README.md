@@ -56,6 +56,7 @@ Windows 上的 VRChat 好友状态监控工具。可为每位好友分别设置�
 | --- | --- |
 | `settings.json` | 按账号保存好友通知规则和选项 |
 | `session.bin` | 由 Windows DPAPI 为当前用户加密的登录会话 |
+| `connection-status.json` | 最近一次连接步骤、错误类型和状态码，不含账号、好友资料或认证 Cookie |
 | `logs/YYYY-MM-DD.log` | 普通文本好友上下线日志，包含好友名称、好友 ID 和当前账号 ID |
 
 密码不保存。应用直接连接 VRChat 的 API 和实时状态服务，不上传日志到本项目或第三方服务器。日志未加密，不会自动清除；可自行删除不再需要的历史文件。

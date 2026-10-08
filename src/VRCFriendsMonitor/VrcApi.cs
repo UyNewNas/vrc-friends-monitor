@@ -25,6 +25,67 @@ sealed class VrcApi : IDisposable
         http.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
     }
     public string Session => string.Join("; ", cookies.GetCookies(Origin).Cast<Cookie>().Where(c => c.Name is "auth" or "twoFactorAuth").Select(c => $"{c.Name}={c.Value}"));
+    internal async Task CheckConnection(string output)
+    {
+        var checks = new List<string>();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(50));
+        try
+        {
+            var current = await Request("auth/user", deadline.Token);
+            checks.Add("Account API: " + (PresenceTracker.Str(current, "id").Length > 0 ? "authenticated" : "incomplete"));
+            if (PresenceTracker.Str(current, "id").Length > 0) Storage.SaveSession(Session);
+        }
+        catch (Exception ex) { checks.Add("Account API: " + ConnectionFailure.Code(ex)); }
+        try { var friends = await Friends(deadline.Token); checks.Add("Friends API: readable, count=" + friends.Count); }
+        catch (Exception ex) { checks.Add("Friends API: " + ConnectionFailure.Code(ex)); }
+        using var socket = CreateSocket();
+        socket.Options.CollectHttpResponseDetails = true;
+        try
+        {
+            using var connect = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); connect.CancelAfter(TimeSpan.FromSeconds(15));
+            await socket.ConnectAsync(SocketUri(), connect.Token);
+            checks.Add("WebSocket: connected, HTTP=" + (int)socket.HttpStatusCode);
+            using var receive = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); receive.CancelAfter(TimeSpan.FromSeconds(25));
+            var buffer = new byte[8192]; int frames = 0;
+            try
+            {
+                while (true)
+                {
+                    using var body = new MemoryStream(); WebSocketReceiveResult frame;
+                    do
+                    {
+                        frame = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), receive.Token);
+                        if (frame.MessageType == WebSocketMessageType.Close) { checks.Add("WebSocket: closed, code=" + socket.CloseStatus); return; }
+                        body.Write(buffer, 0, frame.Count);
+                        if (body.Length > 2 * 1024 * 1024) throw new IOException();
+                    } while (!frame.EndOfMessage);
+                    frames++;
+                    using var message = JsonDocument.Parse(body.ToArray());
+                    if (message.RootElement.TryGetProperty("err", out var error))
+                    {
+                        var text = error.ValueKind == JsonValueKind.String ? error.GetString() ?? "" : "";
+                        checks.Add("WebSocket: server error, category=" + (text.Contains("auth", StringComparison.OrdinalIgnoreCase) ? "Authentication" : "Other") + ", kind=" + error.ValueKind);
+                        return;
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (!deadline.IsCancellationRequested)
+            { checks.Add("WebSocket: receive observation complete, frames=" + frames); }
+        }
+        catch (Exception ex) { checks.Add("WebSocket: " + ConnectionFailure.Code(ex) + ", HTTP=" + (int)socket.HttpStatusCode); }
+        finally { File.WriteAllLines(output, checks); }
+    }
+    ClientWebSocket CreateSocket()
+    {
+        var socket = new ClientWebSocket(); socket.Options.SetRequestHeader("User-Agent", UserAgent);
+        socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20); socket.Options.KeepAliveTimeout = TimeSpan.FromSeconds(20);
+        return socket;
+    }
+    Uri SocketUri()
+    {
+        var auth = cookies.GetCookies(Origin)["auth"]?.Value ?? throw new ApiException(HttpStatusCode.Unauthorized, "请重新登录。");
+        return new Uri("wss://pipeline.vrchat.cloud/?authToken=" + Uri.EscapeDataString(auth));
+    }
     public async Task<JsonElement> Request(string path, CancellationToken ct = default, HttpMethod? method = null, object? body = null, string? basic = null)
     {
         ct.ThrowIfCancellationRequested();
@@ -85,38 +146,46 @@ sealed class VrcApi : IDisposable
         {
             using var connection = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Task? reader = null;
+            string stage = "Session";
+            int handshakeStatus = 0;
+            ConnectionFailure.Report(stage);
             try
             {
                 status(failures == 0 ? "正在连接实时通知…" : "正在重新连接…");
                 var current = await Request("auth/user", ct);
                 if (!current.TryGetProperty("id", out _)) throw new ApiException(HttpStatusCode.Unauthorized, "登录已失效，请重新登录。");
                 Storage.SaveSession(Session);
-                using var socket = new ClientWebSocket();
-                socket.Options.SetRequestHeader("User-Agent", UserAgent);
-                socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
-                socket.Options.KeepAliveTimeout = TimeSpan.FromSeconds(20);
-                var auth = cookies.GetCookies(Origin)["auth"]?.Value ?? throw new ApiException(HttpStatusCode.Unauthorized, "请重新登录。");
+                using var socket = CreateSocket();
+                socket.Options.CollectHttpResponseDetails = true;
+                stage = "ConnectSocket"; ConnectionFailure.Report(stage);
                 using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
-                { timeout.CancelAfter(TimeSpan.FromSeconds(30)); await socket.ConnectAsync(new Uri("wss://pipeline.vrchat.cloud/?authToken=" + Uri.EscapeDataString(auth)), timeout.Token); }
+                {
+                    timeout.CancelAfter(TimeSpan.FromSeconds(30));
+                    try { await socket.ConnectAsync(SocketUri(), timeout.Token); }
+                    finally { handshakeStatus = (int)socket.HttpStatusCode; }
+                }
                 var queue = Channel.CreateBounded<string>(new BoundedChannelOptions(4096) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = true });
                 reader = Receive(socket, queue.Writer, connection.Token);
+                stage = "SyncFriends"; ConnectionFailure.Report(stage);
                 baseline(await Friends(connection.Token));
                 // Events buffered while building the snapshot establish the baseline silently.
                 while (queue.Reader.TryRead(out var buffered)) message(buffered, true);
                 status("实时监控中 · 关闭窗口后仍会在托盘运行");
+                stage = "Live"; ConnectionFailure.Report(stage);
                 failures = 0;
                 await foreach (var raw in queue.Reader.ReadAllAsync(connection.Token)) message(raw, false);
                 throw new IOException("实时连接已断开。");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (ApiException ex) when (ex.Status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            { status(ex.Message); return; }
+            { ConnectionFailure.Report(stage, ex, handshakeStatus); status(ConnectionFailure.Describe(stage, ex)); return; }
             catch (Exception ex)
             {
                 failures++;
                 var seconds = Math.Min(120, 5 * (1 << Math.Min(failures - 1, 5)));
                 if (ex is ApiException limited && limited.Status == HttpStatusCode.TooManyRequests) seconds = 120;
-                status((ex is ApiException ? ex.Message : "网络连接中断。") + $" {seconds} 秒后重连；好友状态暂时未知。");
+                ConnectionFailure.Report(stage, ex, handshakeStatus);
+                status(ConnectionFailure.Describe(stage, ex, handshakeStatus) + $" {seconds} 秒后重试；好友状态暂时未知。");
                 connection.Cancel();
                 if (reader != null) try { await reader; } catch { }
                 try { await Task.Delay(TimeSpan.FromSeconds(seconds), ct); } catch (OperationCanceledException) { break; }
