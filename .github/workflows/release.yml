@@ -74,5 +74,12 @@ jobs:
           if ($env:PRERELEASE -eq 'true') { $releaseArgs += '--prerelease' }
           else { $releaseArgs += '--latest' }
           $releaseArgs += @($assets.FullName)
-          gh @args
+          gh @releaseArgs
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }
+          $publishedJson = gh release view $env:RELEASE_TAG --json tagName,isDraft,assets
+          if ($LASTEXITCODE -ne 0) { throw 'Published release was not found.' }
+          $published = $publishedJson | ConvertFrom-Json
+          if ($published.isDraft -or $published.tagName -ne $env:RELEASE_TAG -or @($published.assets).Count -ne 2) { throw 'Published release is incomplete.' }
+          $names = @($published.assets.name | Sort-Object)
+          $expected = @($expectedName, ($expectedName + '.sha256') | Sort-Object)
+          if (Compare-Object $names $expected) { throw 'Published assets do not match the verified package.' }
