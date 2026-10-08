@@ -107,6 +107,36 @@ static class SelfTest
         using var badCode = new VrcApi(testHandler: new FakeHandler(_ => Task.FromResult(Response("{\"verified\":false}"))));
         try { await badCode.Verify("totp", "000000"); check(false, "rejected 2FA blocked"); }
         catch (InvalidOperationException) { check(true, "rejected 2FA blocked"); }
+        foreach (var status in new[] { System.Net.HttpStatusCode.OK, System.Net.HttpStatusCode.Unauthorized })
+        {
+            using var challenged = new VrcApi("auth=partial-session", new FakeHandler(_ => Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent("{\"requiresTwoFactorAuth\":[\"totp\",\"emailOtp\"]}") })));
+            var user = await challenged.Login("synthetic", "synthetic");
+            check(AuthChallenge.Required(user) && AuthChallenge.Methods(user).SequenceEqual(new[] { "totp", "emailotp", "otp" }) && challenged.Session == "auth=partial-session", $"{(int)status} challenge preserves partial session and provides recovery option");
+        }
+        using var nested = JsonDocument.Parse("{\"error\":{\"requiresTwoFactorAuth\":[\"EMAILOTP\",\"unknown\"]}}");
+        check(AuthChallenge.Required(nested.RootElement) && AuthChallenge.Methods(nested.RootElement).SequenceEqual(new[] { "emailotp" }), "nested challenge and supported methods parsed safely");
+        using var unsupported = JsonDocument.Parse("{\"requiresTwoFactorAuth\":[]}");
+        check(AuthChallenge.Required(unsupported.RootElement) && AuthChallenge.Methods(unsupported.RootElement).Length == 0, "empty challenge cannot bypass authentication");
+        using var ordinary = new VrcApi(testHandler: new FakeHandler(_ => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized) { Content = new StringContent("{\"error\":{\"message\":\"secret must never appear\"}}") })));
+        try { await ordinary.Login("synthetic", "wrong"); check(false, "ordinary 401 blocked"); }
+        catch (ApiException ex) { check(!ex.Message.Contains("secret"), "ordinary 401 is not a challenge and server payload is not exposed"); }
+        int tries = 0;
+        using var retry = new VrcApi("auth=partial-session", new FakeHandler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/otp/verify"))
+            { tries++; return Task.FromResult(Response(tries == 1 ? "{\"verified\":false}" : "{\"verified\":true}")); }
+            return Task.FromResult(Response("{\"id\":\"usr_synthetic\"}"));
+        }));
+        try { await retry.Verify("otp", "wrong"); } catch (InvalidOperationException) { }
+        await retry.Verify("otp", "synthetic-recovery");
+        check(tries == 2 && retry.Session == "auth=partial-session" && PresenceTracker.Str(await retry.Request("auth/user"), "id") == "usr_synthetic", "failed recovery code can retry on same session before completing login");
+        using var browserCookies = JsonDocument.Parse("{\"cookies\":[{\"domain\":\".vrchat.cloud\",\"name\":\"auth\",\"value\":\"synthetic\"},{\"domain\":\"api.vrchat.cloud\",\"name\":\"twoFactorAuth\",\"value\":\"second\"},{\"domain\":\"vrchat.cloud.evil.invalid\",\"name\":\"auth\",\"value\":\"wrong\"},{\"domain\":\"api.vrchat.cloud\",\"name\":\"unrelated\",\"value\":\"ignored\"},{\"domain\":\"api.vrchat.cloud\",\"name\":\"auth\",\"value\":\"expired\",\"expires\":1}]}");
+        check(BrowserLogin.ExtractSession(browserCookies.RootElement) == "auth=synthetic; twoFactorAuth=second", "browser login excludes unrelated, lookalike and expired cookies");
+        using var unsafeCookies = JsonDocument.Parse("{\"cookies\":[{\"domain\":\"api.vrchat.cloud\",\"name\":\"auth\",\"value\":\"a; injected=b\"}]}");
+        check(BrowserLogin.ExtractSession(unsafeCookies.RootElement) == "", "cookie delimiter injection rejected");
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        try { await retry.Login("synthetic", "synthetic", cancellation.Token); check(false, "cancelled login blocked"); }
+        catch (OperationCanceledException) { check(true, "cancelled login blocked"); }
     }
     static HttpResponseMessage Response(string json) => new(System.Net.HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
     sealed class FakeHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler

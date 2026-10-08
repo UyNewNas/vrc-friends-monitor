@@ -27,10 +27,17 @@ sealed class VrcApi : IDisposable
     public string Session => string.Join("; ", cookies.GetCookies(Origin).Cast<Cookie>().Where(c => c.Name is "auth" or "twoFactorAuth").Select(c => $"{c.Name}={c.Value}"));
     public async Task<JsonElement> Request(string path, CancellationToken ct = default, HttpMethod? method = null, object? body = null, string? basic = null)
     {
+        ct.ThrowIfCancellationRequested();
         using var request = new HttpRequestMessage(method ?? HttpMethod.Get, path);
         if (basic != null) request.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
         if (body != null) request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        JsonElement result = default;
+        try { using var doc = JsonDocument.Parse(text); result = doc.RootElement.Clone(); }
+        catch (JsonException) when (!response.IsSuccessStatusCode) { }
+        // A structured challenge can accompany a 401; preserve the partial session for verification.
+        if (path == "auth/user" && response.StatusCode == HttpStatusCode.Unauthorized && AuthChallenge.Required(result)) return result;
         if (!response.IsSuccessStatusCode)
         {
             string message = response.StatusCode switch
@@ -42,14 +49,13 @@ sealed class VrcApi : IDisposable
             };
             throw new ApiException(response.StatusCode, message);
         }
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
-        return doc.RootElement.Clone();
+        return result;
     }
-    public Task<JsonElement> Login(string username, string password) => Request("auth/user", basic: Convert.ToBase64String(Encoding.UTF8.GetBytes(Uri.EscapeDataString(username) + ":" + Uri.EscapeDataString(password))));
-    public async Task Verify(string type, string code)
+    public Task<JsonElement> Login(string username, string password, CancellationToken ct = default) => Request("auth/user", ct, basic: Convert.ToBase64String(Encoding.UTF8.GetBytes(Uri.EscapeDataString(username) + ":" + Uri.EscapeDataString(password))));
+    public async Task Verify(string type, string code, CancellationToken ct = default)
     {
         if (type is not ("totp" or "emailotp" or "otp")) throw new InvalidOperationException("不支持此验证方式。");
-        var result = await Request($"auth/twofactorauth/{type}/verify", method: HttpMethod.Post, body: new { code });
+        var result = await Request($"auth/twofactorauth/{type}/verify", ct, method: HttpMethod.Post, body: new { code });
         if (!result.TryGetProperty("verified", out var verified) || verified.ValueKind != JsonValueKind.True) throw new InvalidOperationException("验证码未通过，请重新输入。");
     }
     public async Task<List<Friend>> Friends(CancellationToken ct)

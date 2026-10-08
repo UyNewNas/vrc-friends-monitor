@@ -6,6 +6,7 @@ static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Contains("--browser-smoke")) { BrowserLogin.SmokeTest(args.Last()); return; }
         if (args.Contains("--self-test")) { SelfTest.Run(args.Last()); return; }
         if (args.Contains("--render-preview"))
         {
@@ -19,6 +20,8 @@ static class Program
             using var toastBitmap = new Bitmap(toast.Width, toast.Height); toast.DrawToBitmap(toastBitmap, new Rectangle(Point.Empty, toastBitmap.Size)); toastBitmap.Save(Path.Combine(output, "toast-preview.png"));
             using var dialog = new LoginDialog(); dialog.Show(); Application.DoEvents();
             using var loginBitmap = new Bitmap(dialog.Width, dialog.Height); dialog.DrawToBitmap(loginBitmap, new Rectangle(Point.Empty, loginBitmap.Size)); loginBitmap.Save(Path.Combine(output, "login-preview.png"));
+            using var code = new CodeDialog(["totp", "emailotp", "otp"]); code.Show(); Application.DoEvents();
+            using var codeBitmap = new Bitmap(code.Width, code.Height); code.DrawToBitmap(codeBitmap, new Rectangle(Point.Empty, codeBitmap.Size)); codeBitmap.Save(Path.Combine(output, "two-factor-preview.png"));
             return;
         }
         using var mutex = new Mutex(true, @"Local\VRChatFriendNotifier", out var first);

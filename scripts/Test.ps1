@@ -13,9 +13,12 @@ function Invoke-AppCheck([string]$Mode, [string]$OutputPath) {
 $report = Join-Path $testRoot 'self-test.txt'
 Invoke-AppCheck '--self-test' $report
 Get-Content -LiteralPath $report
+$browserReport = Join-Path $testRoot 'browser-test.txt'
+Invoke-AppCheck '--browser-smoke' $browserReport
+Get-Content -LiteralPath $browserReport
 $previewDir = Join-Path $testRoot 'preview'
 Invoke-AppCheck '--render-preview' $previewDir
-foreach ($name in @('settings-preview.png','logs-preview.png','toast-preview.png','login-preview.png')) {
+foreach ($name in @('settings-preview.png','logs-preview.png','toast-preview.png','login-preview.png','two-factor-preview.png')) {
     if (!(Test-Path -LiteralPath (Join-Path $previewDir $name))) { throw "Missing UI preview: $name" }
 }
 Write-Output 'UI checks passed (synthetic data only; clipboard writer mocked).'
