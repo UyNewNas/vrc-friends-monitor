@@ -194,11 +194,11 @@ sealed class LoginBrowser : IAsyncDisposable
         }
         var fullPath = Path.GetFullPath(Profile);
         if (!fullPath.StartsWith(Path.GetFullPath(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return;
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 50; i++)
         {
             try { if (Directory.Exists(fullPath)) Directory.Delete(fullPath, true); break; }
-            catch (IOException) { await Task.Delay(100); }
-            catch (UnauthorizedAccessException) { await Task.Delay(100); }
+            catch (IOException) { await Task.Delay(200); }
+            catch (UnauthorizedAccessException) { await Task.Delay(200); }
         }
     }
 }

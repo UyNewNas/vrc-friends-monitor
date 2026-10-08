@@ -26,7 +26,7 @@ sealed class LoginDialog : Form
     public JsonElementResult? User { get; private set; }
     public LoginDialog()
     {
-        Theme.Style(this); Text = "登录 VRChat"; ClientSize = new Size(490, 440); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = MinimizeBox = false; StartPosition = FormStartPosition.CenterParent;
+        Theme.Style(this); Text = $"登录 VRChat · {AppVersion.Display}"; ClientSize = new Size(490, 440); FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = MinimizeBox = false; StartPosition = FormStartPosition.CenterParent;
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(26), ColumnCount = 1, RowCount = 9 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.Controls.Add(new Label { Text = "使用 VRChat 账号登录", AutoSize = true, Font = new Font(Font, FontStyle.Bold) });

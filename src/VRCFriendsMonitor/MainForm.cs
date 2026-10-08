@@ -31,10 +31,13 @@ sealed class MainForm : Form
     public MainForm(bool demo = false)
     {
         this.demo = demo; settings = demo ? new Settings() : Storage.Load(); toasts = new(settings);
-        Theme.Style(this); Text = "VRChat 好友通知"; ClientSize = new Size(900, 740); MinimumSize = new Size(760, 600); StartPosition = FormStartPosition.CenterScreen;
+        Theme.Style(this); Text = $"VRChat 好友通知 · {AppVersion.Display}"; ClientSize = new Size(900, 740); MinimumSize = new Size(760, 600); StartPosition = FormStartPosition.CenterScreen;
         var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(26), ColumnCount = 1, RowCount = 8 };
         root.RowStyles.Add(new(SizeType.Absolute, 48)); root.RowStyles.Add(new(SizeType.Absolute, 42)); root.RowStyles.Add(new(SizeType.Absolute, 38)); root.RowStyles.Add(new(SizeType.Absolute, 42)); root.RowStyles.Add(new(SizeType.Percent, 100)); root.RowStyles.Add(new(SizeType.Absolute, 42)); root.RowStyles.Add(new(SizeType.Absolute, 108)); root.RowStyles.Add(new(SizeType.Absolute, 40));
-        var title = new Label { Text = "好友上线，及时知道。", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold) }; root.Controls.Add(title);
+        var heading = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); heading.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var title = new Label { Text = "好友上线，及时知道。", AutoSize = true, Font = new Font("Microsoft YaHei UI", 22, FontStyle.Bold) }; heading.Controls.Add(title);
+        heading.Controls.Add(new Label { Text = AppVersion.Display, AutoSize = true, Anchor = AnchorStyles.Right, ForeColor = Theme.Muted }); root.Controls.Add(heading);
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill };
         login = Theme.Button("登录 VRChat", async (_, _) => await ChangeAccount());
         refresh = Theme.Button("刷新好友", async (sender, _) => { if (sessionBusy) return; sessionBusy = true; ((Button)sender!).Enabled = false; try { await StopMonitor(); StartMonitor(); } finally { sessionBusy = false; } }); refresh.Enabled = false;
@@ -83,7 +86,7 @@ sealed class MainForm : Form
         menu.Items.Add("打开日志文件夹", null, (_, _) => OpenLogs());
         var pauseItem = new ToolStripMenuItem("暂停弹窗") { CheckOnClick = true }; pauseItem.CheckedChanged += (_, _) => pause.Checked = pauseItem.Checked; pause.CheckedChanged += (_, _) => pauseItem.Checked = pause.Checked; menu.Items.Add(pauseItem);
         menu.Items.Add("退出程序", null, async (_, _) => await Exit());
-        tray = new NotifyIcon { Icon = SystemIcons.Information, Text = "VRChat 好友通知", Visible = !demo, ContextMenuStrip = menu }; tray.DoubleClick += (_, _) => Restore();
+        tray = new NotifyIcon { Icon = SystemIcons.Information, Text = $"VRChat 好友通知 · {AppVersion.Display}", Visible = !demo, ContextMenuStrip = menu }; tray.DoubleClick += (_, _) => Restore();
         FormClosing += (_, e) =>
         {
             if (e.CloseReason is CloseReason.WindowsShutDown or CloseReason.TaskManagerClosing) { exiting = true; cancellation?.Cancel(); }
