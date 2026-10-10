@@ -85,6 +85,7 @@ sealed class MainForm : Form
         menu.Items.Add("查看日志", null, (_, _) => ShowLogTab());
         menu.Items.Add("打开日志文件夹", null, (_, _) => OpenLogs());
         var pauseItem = new ToolStripMenuItem("暂停弹窗") { CheckOnClick = true }; pauseItem.CheckedChanged += (_, _) => pause.Checked = pauseItem.Checked; pause.CheckedChanged += (_, _) => pauseItem.Checked = pause.Checked; menu.Items.Add(pauseItem);
+        menu.Items.Add("忘记已保存账号密码", null, (_, _) => ForgetCredentials());
         menu.Items.Add("退出程序", null, async (_, _) => await Exit());
         tray = new NotifyIcon { Icon = SystemIcons.Information, Text = $"VRChat 好友通知 · {AppVersion.Display}", Visible = !demo, ContextMenuStrip = menu }; tray.DoubleClick += (_, _) => Restore();
         FormClosing += (_, e) =>
@@ -125,33 +126,46 @@ sealed class MainForm : Form
         var session = Storage.LoadSession(); if (session == null) { ConnectionFailure.Report("NoSavedSession"); return; }
         ConnectionFailure.Report("SessionRestore");
         sessionBusy = true; login.Enabled = false; status.Text = "正在恢复登录…";
-        var saved = new VrcApi(session);
+        VrcApi? saved = null;
         try
         {
+            saved = new VrcApi(session);
             var user = await saved.Request("auth/user"); var id = PresenceTracker.Str(user, "id");
             if (id.Length == 0) throw new InvalidOperationException();
             api = saved; accountId = id; login.Text = "退出登录"; StartMonitor();
         }
-        catch (Exception ex) { saved.Dispose(); ConnectionFailure.Report("SessionRestore", ex); status.Text = ConnectionFailure.Describe("Session", ex) + " 请重新登录或稍后重试。"; }
+        catch (Exception ex) { saved?.Dispose(); ConnectionFailure.Report("SessionRestore", ex); status.Text = ConnectionFailure.Describe("Session", ex) + " 请重新登录或稍后重试。"; }
         finally { sessionBusy = false; login.Enabled = true; }
     }
     async Task ChangeAccount()
     {
-        if (sessionBusy) return; sessionBusy = true; login.Enabled = false; refresh.Enabled = false;
+        if (demo || sessionBusy) return; sessionBusy = true; login.Enabled = false; refresh.Enabled = false;
         try
         {
             await StopMonitor(); toasts.Clear();
             if (api != null)
             {
                 try { await api.Request("logout", method: HttpMethod.Put); } catch { }
-                api.Dispose(); api = null; Storage.DeleteSession(); accountId = ""; tracker.Friends.Clear(); history.Items.Clear(); Populate(); login.Text = "登录 VRChat"; status.Text = "已退出登录。"; return;
+                api.Dispose(); api = null; Storage.DeleteSession(); accountId = ""; tracker.Friends.Clear(); history.Items.Clear(); Populate(); login.Text = "登录 VRChat"; status.Text = "已退出登录。已记住的账号密码可在登录窗口或托盘菜单中清除。"; return;
             }
             using var dialog = new LoginDialog();
             if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Api == null) return;
             api = dialog.Api; accountId = dialog.User!.Id; login.Text = "退出登录"; StartMonitor();
+            if (dialog.PersistenceWarning != null) MessageBox.Show(this, dialog.PersistenceWarning, "已登录 · 保存提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch { status.Text = "操作未完成，请重试。"; }
         finally { login.Enabled = true; refresh.Enabled = api != null; sessionBusy = false; }
+    }
+    void ForgetCredentials()
+    {
+        if (demo || sessionBusy) return;
+        Restore();
+        try
+        {
+            new CredentialStore().Delete();
+            MessageBox.Show(this, "已清除保存的账号密码。当前登录会话、好友设置和日志均保留。", "账号密码已清除", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch { MessageBox.Show(this, "无法删除已保存的账号密码，请检查磁盘或文件权限后重试；旧数据可能仍在本机。", "清除失败", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
     void StartMonitor()
     {

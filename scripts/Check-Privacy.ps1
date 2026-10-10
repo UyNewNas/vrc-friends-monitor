@@ -5,7 +5,7 @@ $files = @(git -C $repoRoot ls-files)
 if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) { throw 'No tracked source files to audit.' }
 $problems = [System.Collections.Generic.List[string]]::new()
 $allowedRoot = @('.gitignore','.gitattributes','.editorconfig','global.json','Directory.Build.props','README.md','LICENSE','CONTRIBUTING.md','SECURITY.md')
-$pathPatterns = @('(^|/)(bin|obj|artifacts|logs|log-test-artifacts|\.build-home|\.vs|\.codex)(/|$)', '(^|/)(settings\.json|session\.bin|\.env(?:\..*)?|test-results\.txt)$', '\.(exe|dll|pdb|zip|log|pfx|p12|pem|key)$')
+$pathPatterns = @('(^|/)(bin|obj|artifacts|logs|log-test-artifacts|\.build-home|\.vs|\.codex)(/|$)', '(^|/)(settings\.json|session\.bin|credentials\.bin|\.env(?:\..*)?|test-results\.txt)$', '\.(exe|dll|pdb|zip|log|tmp|pfx|p12|pem|key)$')
 # Report only filenames, never potentially secret matching values.
 $contentPatterns = @(
     '(?i)[A-Z]:[\\/](?:Users|[^\\/]+[\\/]Documents)[\\/]',
