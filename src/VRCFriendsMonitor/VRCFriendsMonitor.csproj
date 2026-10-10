@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>VRChatFriendNotifier</AssemblyName>
-    <Version>1.4.2</Version>
+    <Version>1.5.0-rc.1</Version>
     <Product>VRC Friends Monitor</Product>
     <Description>Windows VRChat friend presence notifications and local logs.</Description>
     <RepositoryUrl>https://github.com/UyNewNas/vrc-friends-monitor</RepositoryUrl>

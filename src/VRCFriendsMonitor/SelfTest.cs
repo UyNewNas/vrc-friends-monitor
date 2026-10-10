@@ -8,7 +8,11 @@ static class SelfTest
     public static void Run(string output)
     {
         var results = new List<string>();
-        void Check(bool pass, string name) { if (!pass) throw new InvalidOperationException("FAIL: " + name); results.Add("PASS: " + name); }
+        void Check(bool pass, string name)
+        {
+            results.Add((pass ? "PASS: " : "FAIL: ") + name);
+            if (!pass) throw new InvalidOperationException("Offline self-test assertion failed.");
+        }
         string Event(string type, string id = "u", bool encoded = true) => JsonSerializer.Serialize(new { type, content = (object)(encoded ? JsonSerializer.Serialize(new { userId = id, user = new { displayName = "好友 A" } }) : new { userId = id, user = new { displayName = "好友 A" } }) });
         try
         {
@@ -33,6 +37,7 @@ static class SelfTest
             using var priv = JsonDocument.Parse("{\"location\":\"private\"}"); Check(PresenceTracker.ParseState(priv.RootElement) == Presence.Game, "private location classified as game");
             var clear = Encoding.UTF8.GetBytes("auth=test-session; twoFactorAuth=test-2fa"); var encrypted = Storage.Protect(clear, false);
             Check(!clear.SequenceEqual(encrypted) && clear.SequenceEqual(Storage.Protect(encrypted, true)), "Windows DPAPI encrypted session roundtrip");
+            CredentialTests(Check);
             var settings = new Settings(); settings.Accounts["account-A"] = new() { ["u"] = new Rule { Online = true, Offline = false } }; settings.Accounts["account-B"] = new();
             var restored = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings))!;
             Check(restored.Accounts["account-A"]["u"].Online && !restored.Accounts["account-A"]["u"].Offline && restored.Accounts["account-B"].Count == 0, "independent switches and account separation persist");
@@ -43,7 +48,112 @@ static class SelfTest
             LogTests(Check, output);
             File.WriteAllLines(output, results); Environment.ExitCode = 0;
         }
-        catch (Exception ex) { results.Add(ex.ToString()); File.WriteAllLines(output, results); Environment.ExitCode = 1; }
+        catch (Exception ex) { results.Add("FAIL: offline self-test could not complete (" + ex.GetType().Name + ")"); File.WriteAllLines(output, results); Environment.ExitCode = 1; }
+    }
+    static void CredentialTests(Action<bool, string> check)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "VRCFriendsMonitor-credential-test-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "credentials.bin");
+        var store = new CredentialStore(directory);
+        static bool Throws<T>(Action action) where T : Exception
+        {
+            try { action(); return false; }
+            catch (T) { return true; }
+        }
+        static bool FileOperationFails(Action action)
+        {
+            try { action(); return false; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }
+        }
+        bool HasNoTemporaryFiles() => !Directory.EnumerateFiles(directory, "credentials.bin*.tmp").Any();
+        try
+        {
+            check(store.Load() == null, "missing credential directory returns no saved account");
+            store.Delete();
+            check(!Directory.Exists(directory), "forgetting absent credentials does not create a directory");
+
+            Directory.CreateDirectory(directory);
+            var settingsPath = Path.Combine(directory, "settings.json");
+            var sessionPath = Path.Combine(directory, "session.bin");
+            var settingsBytes = JsonSerializer.SerializeToUtf8Bytes(new Settings { Sound = true, Seconds = 8 });
+            var sessionBytes = Storage.Protect(Encoding.UTF8.GetBytes("auth=synthetic-coexisting-session"), false);
+            Storage.AtomicWrite(settingsPath, settingsBytes);
+            Storage.AtomicWrite(sessionPath, sessionBytes);
+            File.WriteAllBytes(sessionPath + ".synthetic.tmp", sessionBytes);
+
+            const string username = "synthetic-credential-account@example.invalid";
+            const string password = "  synthetic-password-marker-\u5408\u6210\U0001F510\t\r\n";
+            var first = new SavedCredentials(username, password);
+            store.Save(first);
+            var recovered = new CredentialStore(directory).Load();
+            check(recovered?.Username == username && recovered.Password == password, "saved account and password restore across credential-store instances");
+            var encrypted = File.ReadAllBytes(path);
+            check(encrypted.AsSpan().IndexOf(Encoding.UTF8.GetBytes(username)) < 0
+                && encrypted.AsSpan().IndexOf(Encoding.UTF8.GetBytes("synthetic-password-marker-")) < 0
+                && HasNoTemporaryFiles(), "credential file contains only encrypted data and no temporary file remains after saving");
+            check(first.ToString() == "SavedCredentials", "credential string representation never includes account or password");
+
+            foreach (var exactPassword in new[] { "   ", "\t\r\n", " \t\u4fdd\u7559 \u5bc6\u7801\U0001F510e\u0301\u00e9\r\n  " })
+            {
+                store.Save(new SavedCredentials(username, exactPassword));
+                check(new CredentialStore(directory).Load()?.Password == exactPassword, "saved password preserves spaces, line breaks and Unicode exactly");
+            }
+
+            var replacement = new SavedCredentials("synthetic-replacement-account", "synthetic-replacement-password");
+            store.Save(replacement);
+            recovered = new CredentialStore(directory).Load();
+            check(recovered?.Username == replacement.Username && recovered.Password == replacement.Password, "saving a different account replaces both saved fields");
+            var previousBytes = File.ReadAllBytes(path);
+            check(Throws<ArgumentException>(() => store.Save(new SavedCredentials("", password)))
+                && Throws<ArgumentException>(() => store.Save(new SavedCredentials(" \t", password)))
+                && Throws<ArgumentException>(() => store.Save(new SavedCredentials(null!, password)))
+                && Throws<ArgumentException>(() => store.Save(new SavedCredentials(username, "")))
+                && Throws<ArgumentException>(() => store.Save(new SavedCredentials(username, null!)))
+                && Throws<ArgumentNullException>(() => store.Save(null!))
+                && previousBytes.SequenceEqual(File.ReadAllBytes(path)), "invalid saved credentials are rejected without replacing existing credentials");
+
+            bool saveFailed;
+            using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                saveFailed = FileOperationFails(() => store.Save(first));
+            check(saveFailed && previousBytes.SequenceEqual(File.ReadAllBytes(path)) && HasNoTemporaryFiles(), "failed atomic replacement is reported, preserves previous credentials and removes its temporary file");
+            var blocker = Path.Combine(directory, "synthetic-blocked-directory");
+            File.WriteAllBytes(blocker, []);
+            check(FileOperationFails(() => new CredentialStore(blocker).Save(first))
+                && previousBytes.SequenceEqual(File.ReadAllBytes(path)), "invalid storage directory reports a save failure without touching existing credentials");
+
+            File.WriteAllBytes(path, new byte[32]);
+            check(Throws<System.ComponentModel.Win32Exception>(() => store.Load()), "corrupt encrypted credentials report a load failure");
+            File.WriteAllBytes(path, Storage.Protect(Encoding.UTF8.GetBytes("{"), false));
+            check(Throws<JsonException>(() => store.Load()), "corrupt decrypted credential data reports a load failure");
+            File.WriteAllBytes(path, Storage.Protect(Encoding.UTF8.GetBytes("{\"Username\":\"\",\"Password\":\"synthetic\"}"), false));
+            check(Throws<InvalidDataException>(() => store.Load()), "invalid decrypted credential fields report a load failure");
+            File.Delete(path);
+            check(store.Load() == null, "missing credential file returns no saved account");
+            Directory.CreateDirectory(path);
+            check(FileOperationFails(() => store.Load()), "unreadable credential path reports a load failure");
+            Directory.Delete(path);
+
+            store.Save(replacement);
+            bool deleteFailed;
+            using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                deleteFailed = FileOperationFails(store.Delete);
+            check(deleteFailed && store.Load()?.Username == replacement.Username, "failed credential deletion is reported and can be retried");
+            File.WriteAllBytes(path + ".tmp", previousBytes);
+            File.WriteAllBytes(path + ".synthetic.tmp", previousBytes);
+            store.Delete();
+            check(store.Load() == null && HasNoTemporaryFiles(), "forgetting credentials removes saved data and stale temporary files");
+
+            var lockedTemporary = path + ".synthetic.tmp";
+            File.WriteAllBytes(lockedTemporary, previousBytes);
+            using (var locked = new FileStream(lockedTemporary, FileMode.Open, FileAccess.Read, FileShare.Read))
+                deleteFailed = FileOperationFails(store.Delete);
+            check(deleteFailed, "failed removal of a stale credential temporary file is reported");
+            store.Delete();
+            check(HasNoTemporaryFiles() && File.ReadAllBytes(settingsPath).SequenceEqual(settingsBytes)
+                && File.ReadAllBytes(sessionPath).SequenceEqual(sessionBytes)
+                && File.ReadAllBytes(sessionPath + ".synthetic.tmp").SequenceEqual(sessionBytes), "credential save and deletion preserve independent settings, session and session temporary files");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
     }
     static void LogTests(Action<bool, string> check, string output)
     {
