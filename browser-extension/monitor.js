@@ -1,13 +1,17 @@
 import {
   MINUTE, ROSTER_INTERVAL, MAX_EVENTS, MAX_ACCOUNTS,
-  restoreState, normalizeSettings, makeSnapshot, changesBetween, retryDelay, publicState, isUserId,
+  restoreState, normalizeSettings, makeSnapshot, changesBetween, retryDelay, publicState, isUserId, errorDetails,
 } from './core.js';
 import { ApiError } from './api.js';
 
 const errorMessage = error => {
-  if (error.status === 401) return '请在 VRChat 官网登录并完成验证，然后点击「立即同步」。';
-  if (error.status === 403) return 'VRChat 暂时拒绝访问；请到官网检查登录或网页验证，稍后自动重试。';
+  if (error.status === 401) return '请在保留的 VRChat 官网标签页登录并完成验证，然后点击「立即同步」。';
+  if (error.status === 403) return 'VRChat 官网拒绝了本次同步；请在官网标签页检查验证提示并刷新，再点击「立即同步」。';
   if (error.status === 429) return 'VRChat 请求限流；已暂停请求，等待后自动重试。';
+  if (error.kind === 'site_required') return '请打开并保留 VRChat 官网标签页，完成登录后点击「立即同步」。';
+  if (error.kind === 'site_reload_required') return '请刷新已登录的 VRChat 官网标签页一次，并保留该页面，然后点击「立即同步」。';
+  if (error.kind === 'site_unavailable') return '官网标签页暂时无法响应；请保持页面打开，等待加载完成或刷新页面后再次同步。';
+  if (error.kind === 'site_changed') return '同步时官网页面发生变化；已保留上次结果，页面稳定后将自动重试。';
   if (error.kind === 'account_changed') return '检测到官网账号切换，正在等待重新同步。';
   if (error.kind === 'format' || error.kind === 'pagination') return '好友数据尚不完整；已保留上次结果，稍后重新同步。';
   return '网络或 VRChat 服务暂不可用；已保留上次结果，稍后自动重试。';
@@ -73,13 +77,18 @@ export class Monitor {
       const { connection, settings } = this.state;
       const now = this.now();
       if ((!settings.enabled && !manual) || now < connection.retryUntil) return null;
-      if (manual && connection.lastAttemptAt !== null && now - connection.lastAttemptAt < 30_000) return null;
+      // Missing pages/bridges made no API request. Once the user opens or
+      // refreshes the website, permit an immediate retry of that first request.
+      const websiteNotReady = ['site_required', 'site_reload_required'].includes(connection.errorKind);
+      if (manual && !websiteNotReady && connection.lastAttemptAt !== null && now - connection.lastAttemptAt < 30_000) return null;
       if (!manual && connection.nextAttemptAt !== null && now < connection.nextAttemptAt) return null;
       const active = this.state.accounts[this.state.activeAccountId];
       const silent = baseline || manual || !settings.enabled || connection.stale || connection.status !== 'connected' ||
         !active?.lastSyncAt || now - active.lastSyncAt > settings.intervalMinutes * MINUTE * 2 + 15_000;
       connection.status = 'syncing';
       connection.message = '正在同步好友状态…';
+      connection.errorKind = null;
+      connection.errorStatus = 0;
       connection.lastAttemptAt = now;
       this.abortController = new AbortController();
       const operation = {
@@ -122,10 +131,11 @@ export class Monitor {
         for (const stale of oldest.slice(MAX_ACCOUNTS)) delete this.state.accounts[stale.id];
         this.state.connection = {
           status: this.state.settings.enabled ? 'connected' : 'paused',
-          message: this.state.settings.enabled ? '已连接 · 定时同步中' : '监控已暂停 · 手动同步已完成', stale: false,
+          message: this.state.settings.enabled ? '已连接 · 请保留 VRChat 官网标签页，正在定时同步' : '监控已暂停 · 手动同步已完成', stale: false,
           lastSuccessAt: now, lastAttemptAt: this.state.connection.lastAttemptAt,
           nextAttemptAt: this.state.settings.enabled ? now + this.state.settings.intervalMinutes * MINUTE : null,
           failures: 0, retryUntil: 0,
+          errorKind: null, errorStatus: 0,
         };
         // Save the new baseline before notifications: a worker restart cannot
         // replay an already observed transition and flood desktop notifications.
@@ -148,15 +158,20 @@ export class Monitor {
         if (job.generation !== this.generation || error.kind === 'cancelled') return;
         const now = this.now();
         const failures = this.state.connection.failures + 1;
-        const delay = retryDelay(error, failures);
+        const retryAfter = Number.isFinite(error.retryAfterMs) && error.retryAfterMs > 0 ? error.retryAfterMs : 0;
+        const websiteNotReady = ['site_required', 'site_reload_required'].includes(error.kind);
+        const delay = Math.max(websiteNotReady ? MINUTE : retryDelay(error, failures), retryAfter);
+        const serverBackoff = error.status === 429 || retryAfter > 0;
         const authRequired = error.status === 401;
         if (authRequired || error.kind === 'account_changed') this.state.activeAccountId = null;
         this.state.connection = {
           ...this.state.connection,
           status: authRequired ? 'auth_required' : 'retrying', message: errorMessage(error), stale: true,
           nextAttemptAt: now + delay, failures,
-          // User refresh and pause/resume cannot defeat server backoff.
-          retryUntil: authRequired ? 0 : now + delay,
+          ...errorDetails(error),
+          // Automatic retries back off on every failure. Manual recovery can
+          // bypass only that local schedule, never 429 or Retry-After waits.
+          retryUntil: serverBackoff ? now + delay : 0,
         };
         await this.persist();
       });

@@ -5,7 +5,7 @@
 
 ## 浏览器扩展开发分支
 
-`feature/browser-extension` 新增 **Chrome / Edge 扩展版 0.1.0**。在日常浏览器的 VRChat 官网完成登录后，扩展使用该浏览器管理的会话定时同步好友状态。第一版提供完整好友面板、按好友设置上线 / 下线通知、搜索筛选、本地动态记录，以及后台休眠和断线后的恢复机制。
+`feature/browser-extension` 新增 **Chrome / Edge 扩展版 0.1.1**。在日常浏览器的 VRChat 官网完成登录并保留官网标签页后，扩展通过页面内的隔离脚本定时同步好友状态。0.1.1 修复了后台请求可能在官网已登录时仍返回 403 的同步路径；更新扩展后需刷新官网标签页一次。第一版提供完整好友面板、按好友设置上线 / 下线通知、搜索筛选、本地动态记录，以及后台休眠和断线后的恢复机制。
 
 安装、权限、数据保存方式和已知限制见 **[浏览器扩展使用说明](browser-extension/README.md)**。可直接在 Chrome / Edge 的扩展管理页加载 `browser-extension/` 文件夹，也可以下载本分支 [Browser extension 工作流](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/browser-extension.yml) 检查通过后生成的 ZIP。
 

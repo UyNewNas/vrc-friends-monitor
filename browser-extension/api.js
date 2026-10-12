@@ -1,8 +1,5 @@
 import { cleanName, isUserId, readIdentity } from './core.js';
 
-export const API_BASE = 'https://vrchat.com/api/1/';
-const RESPONSE_LIMIT = 4 * 1024 * 1024;
-
 export class ApiError extends Error {
   constructor(kind, status = 0, retryAfterMs = 0) {
     super(kind);
@@ -23,26 +20,10 @@ export function parseRetryAfter(value, now = Date.now()) {
   return Number.isFinite(date) ? Math.max(0, date - now) : 0;
 }
 
-export function createApi({ fetchImpl = fetch, now = Date.now, wait = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
-  async function request(path, signal) {
-    const timeout = AbortSignal.timeout(20_000);
-    try {
-      const response = await fetchImpl(API_BASE + path, {
-        method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'follow',
-        headers: { Accept: 'application/json' },
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-      });
-      if (!response.ok) throw new ApiError('http', response.status, parseRetryAfter(response.headers.get('Retry-After'), now()));
-      if (!response.headers.get('Content-Type')?.toLowerCase().includes('application/json')) throw new ApiError('format');
-      const text = await response.text();
-      if (text.length > RESPONSE_LIMIT) throw new ApiError('format');
-      try { return JSON.parse(text); } catch { throw new ApiError('format'); }
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      if (signal?.aborted) throw new ApiError(signal.reason?.name === 'TimeoutError' ? 'timeout' : 'cancelled');
-      throw new ApiError(timeout.aborted ? 'timeout' : 'network');
-    }
-  }
+// The caller supplies the website-session transport. Never fall back to a
+// worker-origin fetch: it can be denied even while the website is logged in.
+export function createApi({ requestImpl: request, wait = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  if (typeof request !== 'function') throw new TypeError('A website request transport is required.');
 
   return {
     async currentUser(signal) {

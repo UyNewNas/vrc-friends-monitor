@@ -9,6 +9,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
   notificationsEnabled: true,
 });
 
+const ERROR_KINDS = new Set([
+  'http', 'format', 'pagination', 'account_changed', 'timeout', 'network',
+  'site_required', 'site_reload_required', 'site_unavailable', 'site_changed',
+]);
+const LEGACY_FORBIDDEN_MESSAGE = 'VRChat 暂时拒绝访问；请到官网检查登录或网页验证，稍后自动重试。';
+
+// Keep only bounded diagnostic categories. Never persist a browser/network
+// error message, response body, request URL, or authentication material.
+export function errorDetails(error) {
+  const errorKind = ERROR_KINDS.has(error?.kind) ? error.kind : 'network';
+  const errorStatus = errorKind === 'http' && Number.isInteger(error?.status) &&
+    error.status >= 400 && error.status <= 599 ? error.status : 0;
+  return { errorKind, errorStatus };
+}
+
 export function isUserId(value) {
   return typeof value === 'string' && !Object.hasOwn(Object.prototype, value) &&
     (/^usr_[a-zA-Z0-9_-]{1,100}$/.test(value) || /^[a-zA-Z0-9]{10}$/.test(value));
@@ -36,6 +51,7 @@ export function emptyState() {
       status: 'idle', message: '等待首次同步。', stale: true,
       lastSuccessAt: null, lastAttemptAt: null, nextAttemptAt: null,
       failures: 0, retryUntil: 0,
+      errorKind: null, errorStatus: 0,
     },
     notificationWarning: null,
   };
@@ -82,13 +98,26 @@ export function restoreState(raw) {
     }
     state.connection.failures = Math.max(0, Math.min(30, Number(source.failures) || 0));
     state.connection.retryUntil = Number.isFinite(source.retryUntil) ? source.retryUntil : 0;
+    if (ERROR_KINDS.has(source.errorKind)) {
+      Object.assign(state.connection, errorDetails({ kind: source.errorKind, status: source.errorStatus }));
+    }
+    // Version 0.1.0 treated an ordinary 403 as mandatory server backoff.
+    // Migrate only its exact known state; preserve legacy 429/unknown waits.
+    if (!Object.hasOwn(source, 'errorKind') && !Object.hasOwn(source, 'errorStatus') &&
+        source.status === 'retrying' && source.message === LEGACY_FORBIDDEN_MESSAGE) {
+      state.connection.retryUntil = 0;
+      state.connection.errorKind = 'http';
+      state.connection.errorStatus = 403;
+      state.connection.message = '上次官网同步被拒绝；请保留官网标签页，刷新一次后点击「立即同步」。';
+    }
   }
   if (raw.notificationWarning) state.notificationWarning = '浏览器通知不可用；状态与本地记录仍会更新。';
   return state;
 }
 
-// These lists are also used by VRChat's own website. Missing or contradictory
-// lists are not a valid empty snapshot and must never generate logout events.
+// These lists are also used by VRChat's own website. All fields must be present,
+// but their membership can briefly disagree. Only friends controls membership;
+// ambiguous presence stays unknown instead of implying a login or logout.
 export function readIdentity(payload) {
   if (!payload || !isUserId(payload.id)) throw new Error('invalid_identity');
   const lists = ['friends', 'onlineFriends', 'activeFriends', 'offlineFriends'];
@@ -99,16 +128,11 @@ export function readIdentity(payload) {
     if (entries.some(id => !isUserId(id))) throw new Error('invalid_friend_id');
     normalized[key] = new Set(entries);
   }
+  const presence = [['onlineFriends', 'game'], ['activeFriends', 'web'], ['offlineFriends', 'offline']];
   const states = new Map();
-  for (const [key, state] of [['onlineFriends', 'game'], ['activeFriends', 'web'], ['offlineFriends', 'offline']]) {
-    for (const id of normalized[key]) {
-      if (!normalized.friends.has(id)) throw new Error('inconsistent_membership');
-      if (states.has(id)) throw new Error('conflicting_presence');
-      states.set(id, state);
-    }
-  }
   for (const id of normalized.friends) {
-    if (!states.has(id)) throw new Error('incomplete_presence');
+    const matches = presence.filter(([key]) => normalized[key].has(id));
+    states.set(id, matches.length === 1 ? matches[0][1] : 'unknown');
   }
   return { id: payload.id, name: cleanName(payload.displayName, payload.id), states };
 }

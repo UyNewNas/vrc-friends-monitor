@@ -6,8 +6,8 @@ if ($LASTEXITCODE -ne 0 -or $files.Count -eq 0) { throw 'No tracked source files
 $problems = [System.Collections.Generic.List[string]]::new()
 $allowedRoot = @('.gitignore','.gitattributes','.editorconfig','global.json','Directory.Build.props','README.md','LICENSE','CONTRIBUTING.md','SECURITY.md')
 $pathPatterns = @('(^|/)(bin|obj|artifacts|logs|log-test-artifacts|node_modules|dist|coverage|test-results|playwright-report|browser-profile|\.build-home|\.vs|\.codex)(/|$)', '(^|/)(settings\.json|session\.bin|credentials\.json|cookies\.json|\.env(?:\..*)?|test-results\.txt)$', '\.(exe|dll|pdb|zip|log|pfx|p12|pem|key)$')
-$extensionRootFiles = @('manifest.json','package.json','README.md','background.js','api.js','core.js','monitor.js','popup.html','dashboard.html','ui.js','ui.css')
-$extensionScriptFiles = @('project-files.mjs','check.mjs','package.mjs','ui-smoke.mjs')
+$extensionRootFiles = @('manifest.json','package.json','README.md','background.js','api.js','session.js','site-bridge.js','core.js','monitor.js','popup.html','dashboard.html','ui.js','ui.css')
+$extensionScriptFiles = @('project-files.mjs','check.mjs','package.mjs','ui-smoke.mjs','session-smoke.mjs')
 # Report only filenames, never potentially secret matching values.
 $contentPatterns = @(
     '(?i)[A-Z]:[\\/](?:Users|[^\\/]+[\\/]Documents)[\\/]',

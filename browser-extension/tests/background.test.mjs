@@ -76,6 +76,28 @@ test('web pages and forged extension page URLs cannot issue commands', async () 
   assert.deepEqual(f.opened, []);
 });
 
+test('the website content script cannot read cached state or change settings and history', async () => {
+  const f = fixture(); await f.background.initialized;
+  await f.background.monitor.tick();
+  const before = structuredClone(f.data[STORAGE_KEY]);
+  const sender = {
+    id: f.browser.runtime.id, url: 'https://vrchat.com/home',
+    tab: { id: 101, url: 'https://vrchat.com/home' }, frameId: 0,
+  };
+  for (const message of [
+    { type: 'getState' },
+    { type: 'refresh' },
+    { type: 'updateSettings', settings: { enabled: false } },
+    { type: 'setRule', accountId: 'usr_demo_account', friendId: 'usr_demo_friend', online: true, offline: true },
+    { type: 'clearHistory', accountId: 'usr_demo_account' },
+    { type: 'openLogin' },
+  ]) {
+    assert.deepEqual(await f.background.handleMessage(message, sender), { ok: false, error: '消息来源无效。' });
+  }
+  assert.deepEqual(f.data[STORAGE_KEY], before);
+  assert.deepEqual(f.opened, []);
+});
+
 test('login/dashboard commands open only built-in destinations and never accept arbitrary URLs', async () => {
   const f = fixture(); await f.background.initialized;
   assert.equal((await f.background.handleMessage({ type: 'openLogin', url: 'https://example.invalid' }, f.sender)).ok, true);

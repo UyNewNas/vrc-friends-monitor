@@ -1,4 +1,5 @@
 import { createApi } from './api.js';
+import { createWebsiteRequest } from './session.js';
 import { Monitor } from './monitor.js';
 
 export const STORAGE_KEY = 'vrcFriendsMonitorV1';
@@ -7,7 +8,7 @@ export const WATCHDOG_ALARM = 'vrc-friends-watchdog';
 
 export function createBackground(browser = chrome) {
   const monitor = new Monitor({
-    api: createApi(),
+    api: createApi({ requestImpl: createWebsiteRequest(browser) }),
     load: async () => (await browser.storage.local.get(STORAGE_KEY))[STORAGE_KEY],
     save: async state => {
       await browser.storage.local.set({ [STORAGE_KEY]: state });
@@ -41,7 +42,8 @@ export function createBackground(browser = chrome) {
     },
   });
 
-  // Own pages only. No externally_connectable entry or content-script bridge.
+  // Only our own UI may issue commands. The website bridge answers requests
+  // sent by this worker; it cannot read state or mutate settings/history.
   async function handleMessage(message, sender) {
     const ownOrigin = browser.runtime.getURL('');
     const allowedPages = ['popup.html', 'dashboard.html'].map(path => ownOrigin + path);

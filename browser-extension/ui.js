@@ -210,7 +210,10 @@
     const intervalMinutes = [1, 2, 5].includes(state.settings?.intervalMinutes) ? state.settings.intervalMinutes : 1;
     const cacheExpired = validTimestamp(connection.lastSuccessAt) && Date.now() - connection.lastSuccessAt > intervalMinutes * 60000 * 2 + 15000;
     setText("connectionTitle", statusLabels[status]);
-    setText("connectionMessage", safeText(connection.message) || (account ? "好友状态会按照同步间隔自动更新。" : "请先在 VRChat 官网完成登录，再回到这里同步。"));
+    const httpStatus = ["retrying", "auth_required"].includes(status) && connection.errorKind === "http" && Number.isInteger(connection.errorStatus) &&
+      connection.errorStatus >= 400 && connection.errorStatus <= 599 ? `（HTTP ${connection.errorStatus}）` : "";
+    const message = safeText(connection.message) || (account ? "请保留 VRChat 官网标签页，好友状态会按照同步间隔自动更新。" : "请打开并保留 VRChat 官网标签页，完成登录后再回到这里同步。");
+    setText("connectionMessage", message + httpStatus);
     byId("statusDot").className = `status-dot status-${status}`;
     byId("staleBadge").hidden = !account || !(connection.stale === true || cacheExpired);
     const syncText = [];
@@ -229,7 +232,7 @@
     setText("accountName", account ? safeText(account.name, account.id) : "未连接账号");
     byId("accountName").title = account ? safeText(account.name, account.id) : "请先登录 VRChat 官网";
     const login = byId("openLoginButton");
-    if (isPopup) login.hidden = !!account && status !== "auth_required";
+    if (isPopup) login.hidden = !!account && !["auth_required", "retrying"].includes(status);
     else login.textContent = account ? "VRChat 官网 ↗" : "登录 VRChat ↗";
     const warning = byId("notificationWarning");
     warning.hidden = !account || !state.notificationWarning;
@@ -461,6 +464,13 @@
     try {
       const response = await send({ type: "refresh" });
       if (response.state) applyState(response.state);
+      const connection = response.state?.connection;
+      if (validTimestamp(connection?.retryUntil) && connection.retryUntil > Date.now()) {
+        showFeedback(`服务器要求等待，请在 ${clockFormat.format(new Date(connection.retryUntil))} 后重试。`);
+      } else if (["retrying", "auth_required"].includes(connection?.status) && validTimestamp(connection.lastAttemptAt) &&
+          Date.now() - connection.lastAttemptAt < 30000 && !["site_required", "site_reload_required"].includes(connection.errorKind)) {
+        showFeedback("本次同步尚未完成；请查看连接提示，修复后间隔 30 秒再次同步。", true);
+      }
       if (validTimestamp(previousSuccessAt) && previousSuccessAt === response.state?.connection?.lastSuccessAt && ["connected", "paused"].includes(response.state?.connection?.status)) {
         showFeedback("当前为最近一次同步结果；请稍后再刷新。");
       }

@@ -48,6 +48,8 @@ jobs:
         run: npm run check
       - name: Run offline behavior tests
         run: npm test
+      - name: Verify actual extension and website session in an isolated browser
+        run: npm run smoke:session
       - name: Install Chinese fonts for the synthetic browser preview
         run: |
           sudo apt-get update -qq

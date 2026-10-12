@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { EXTENSION_ROOT, RUNTIME_FILES, TOOL_FILES, readSafeFile } from "./project-files.mjs";
 
 const PERMISSIONS = ["alarms", "notifications", "storage"];
-const HOSTS = ["https://vrchat.com/*", "https://api.vrchat.cloud/*"];
+const HOSTS = ["https://vrchat.com/*"];
 const SENSITIVE_CONTENT = [
   /[A-Z]:[\\/](?:Users|[^\\/]+[\\/]Documents)[\\/]/i,
   /(?<![A-Za-z0-9.:/])\/(?:Users|home)\/[^/\s]+\//i,
@@ -76,8 +76,17 @@ export function checkProject({ quiet = false } = {}) {
       "Permissions must be exactly storage, alarms and notifications.");
     requireCondition(manifest.incognito === "not_allowed", "Incognito access must remain disabled.");
     requireCondition(sameItems(manifest.host_permissions, HOSTS),
-      "Host access must be limited to the official website and its API redirect target.");
-    for (const forbidden of ["content_scripts", "optional_permissions", "optional_host_permissions",
+      "Host access must be limited to the official website.");
+    requireCondition(Array.isArray(manifest.content_scripts) && manifest.content_scripts.length === 1,
+      "Exactly one restricted website-session content script is required.");
+    const bridge = manifest.content_scripts?.[0];
+    requireCondition(bridge && sameItems(bridge.matches, ["https://vrchat.com/home*"]) &&
+      sameItems(bridge.js, ["site-bridge.js"]) && bridge.run_at === "document_idle" &&
+      bridge.world === "ISOLATED" && bridge.all_frames === false &&
+      Object.keys(bridge).every(key => ["matches", "js", "run_at", "world", "all_frames"].includes(key)),
+    "The website bridge must run only in the isolated top-level official home page.");
+    if (bridge) for (const script of bridge.js ?? []) reference("manifest.json", script);
+    for (const forbidden of ["optional_permissions", "optional_host_permissions",
       "externally_connectable", "web_accessible_resources", "sandbox", "oauth2", "update_url"]) {
       requireCondition(!(forbidden in manifest), `Unsupported manifest feature: ${forbidden}`);
     }
@@ -104,9 +113,8 @@ export function checkProject({ quiet = false } = {}) {
         "The CSP must not override the packaged-script restriction.");
       requireCondition(sameItems(directives.get("script-src"), ["'self'"]),
         "The CSP must restrict scripts to packaged files.");
-      requireCondition(sameItems(directives.get("connect-src"), ["https://vrchat.com", "https://api.vrchat.cloud"]) ||
-        sameItems(directives.get("connect-src"), ["'self'", "https://vrchat.com", "https://api.vrchat.cloud"]),
-      "The CSP must restrict network connections to the official website and API redirect target.");
+      requireCondition(sameItems(directives.get("connect-src"), ["https://vrchat.com"]),
+      "The CSP must restrict network connections to the official website.");
       requireCondition(sameItems(directives.get("object-src"), ["'none'"]),
         "The CSP must disable object embeds.");
       requireCondition(!/unsafe-eval|unsafe-inline|wasm-unsafe-eval|\*/.test(csp),

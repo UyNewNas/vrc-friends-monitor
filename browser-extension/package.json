@@ -1,6 +1,6 @@
 {
   "name": "vrc-friends-monitor-browser-extension",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "VRChat 好友状态浏览器扩展的离线检查与打包工具",
@@ -12,6 +12,7 @@
     "test": "node --test tests/*.test.mjs",
     "check": "node scripts/check.mjs",
     "smoke": "node scripts/ui-smoke.mjs",
+    "smoke:session": "node scripts/session-smoke.mjs",
     "package": "node scripts/package.mjs"
   }
 }

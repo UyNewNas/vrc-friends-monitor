@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError, createApi } from '../api.js';
-import { MINUTE, ROSTER_INTERVAL, emptyState, isUserId, readIdentity } from '../core.js';
+import { MINUTE, ROSTER_INTERVAL, emptyState, isUserId, readIdentity, restoreState } from '../core.js';
 import { Monitor } from '../monitor.js';
 
 // Synthetic identities only. These scenarios exercise persisted state across
@@ -79,12 +79,6 @@ function deferred() {
   let resolve;
   const promise = new Promise(yes => { resolve = yes; });
   return { promise, resolve };
-}
-
-function response(body, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status, headers: { 'Content-Type': 'application/json', ...extraHeaders },
-  });
 }
 
 test('ordinary worker suspension preserves the baseline and never replays a saved notification', async () => {
@@ -169,6 +163,195 @@ test('server backoff survives refresh, pause/resume, and worker or browser resta
   assert.equal(h.notices.length, 0, 'the first successful observation after a failure is a new baseline');
 });
 
+for (const [kind, status] of [
+  ['http', 403], ['network', 0], ['site_unavailable', 0], ['site_changed', 0],
+]) {
+  test(`${kind}${status ? ` ${status}` : ''} recovery permits a throttled manual retry before the automatic deadline`, async () => {
+    const h = harness({ saved: connectedState('game') });
+    h.source.current = async () => { throw new ApiError(kind, status); };
+    const worker = h.worker();
+    await worker.tick();
+    assert.equal(h.disk.connection.retryUntil, 0);
+    assert.equal(h.disk.connection.nextAttemptAt, h.now + MINUTE);
+    assert.equal(h.disk.connection.errorKind, kind);
+    assert.equal(h.disk.connection.errorStatus, status);
+    assert.equal((await worker.getState()).connection.stale, true);
+    assert.equal(h.disk.accounts[OWNER_A].friends[0].state, 'game');
+
+    h.source.current = null;
+    h.source.raw = payload(OWNER_A, 'offline');
+    h.advance(29_999);
+    await worker.tick({ manual: true });
+    assert.equal(h.calls.current, 1, 'ordinary failures still have a 30-second manual request throttle');
+    h.advance(1_001);
+    await worker.tick();
+    assert.equal(h.calls.current, 1, 'automatic work still respects exponential backoff');
+    await worker.tick({ manual: true });
+    assert.equal(h.calls.current, 2);
+    assert.equal(h.disk.connection.status, 'connected');
+    assert.equal(h.disk.connection.errorKind, null);
+    assert.equal(h.disk.connection.errorStatus, 0);
+    assert.equal(h.disk.accounts[OWNER_A].friends[0].state, 'offline');
+    assert.deepEqual(h.disk.accounts[OWNER_A].events, []);
+    assert.deepEqual(h.notices, []);
+  });
+}
+
+for (const kind of ['site_required', 'site_reload_required']) {
+  test(`${kind} preserves the account and allows immediate manual recovery once the website is ready`, async () => {
+    const h = harness({ saved: connectedState('game') });
+    h.source.current = async () => { throw new ApiError(kind); };
+    let worker = h.worker();
+    await worker.tick();
+    const unavailable = await worker.getState();
+    assert.equal(unavailable.account.id, OWNER_A);
+    assert.equal(unavailable.friends[0].state, 'game');
+    assert.equal(unavailable.connection.stale, true);
+    assert.equal(unavailable.connection.errorKind, kind);
+    assert.equal(unavailable.connection.retryUntil, 0);
+    assert.match(unavailable.connection.message, /保留/);
+    if (kind === 'site_reload_required') assert.match(unavailable.connection.message, /刷新.*一次/);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      h.advance(MINUTE);
+      await worker.tick();
+      assert.equal(h.disk.connection.nextAttemptAt, h.now + MINUTE,
+        'checking local website readiness stays at one minute even after repeated misses');
+    }
+    const attempts = h.calls.current;
+
+    h.source.current = null;
+    h.source.raw = payload(OWNER_A, 'offline');
+    h.advance(1_000);
+    worker = h.worker();
+    await worker.recover();
+    await worker.tick();
+    assert.equal(h.calls.current, attempts, 'opening the popup does not repeatedly retry an unavailable website');
+    await worker.tick({ manual: true });
+    assert.equal(h.calls.current, attempts + 1, 'a previously missing page or bridge issued no API request and needs no delay');
+    assert.equal(h.disk.accounts[OWNER_A].friends[0].state, 'offline');
+    assert.deepEqual(h.disk.accounts[OWNER_A].events, []);
+    assert.deepEqual(h.notices, []);
+  });
+}
+
+for (const status of [403, 503]) {
+  test(`HTTP ${status} with Retry-After remains a hard server deadline`, async () => {
+    const h = harness();
+    h.source.current = async () => { throw new ApiError('http', status, 7 * MINUTE); };
+    let worker = h.worker();
+    await worker.tick();
+    const deadline = h.now + 7 * MINUTE;
+    assert.equal(h.disk.connection.retryUntil, deadline);
+    h.source.current = null;
+    h.source.raw = payload(OWNER_A, 'game');
+    h.advance(31_000);
+    await worker.tick({ manual: true });
+    await worker.updateSettings({ enabled: false });
+    await worker.updateSettings({ enabled: true });
+    worker = h.worker();
+    await worker.recover({ startup: true });
+    h.setTime(deadline - 1);
+    await worker.tick({ manual: true });
+    assert.equal(h.calls.current, 1);
+    h.setTime(deadline);
+    await worker.tick({ manual: true });
+    assert.equal(h.calls.current, 2);
+    assert.equal(h.disk.connection.retryUntil, 0);
+    assert.deepEqual(h.notices, []);
+  });
+}
+
+test('website readiness cannot defeat a persisted mandatory server wait', async () => {
+  const saved = connectedState();
+  saved.connection.status = 'retrying';
+  saved.connection.errorKind = 'site_reload_required';
+  saved.connection.retryUntil = T0 + 7 * MINUTE;
+  const h = harness({ saved });
+  const worker = h.worker();
+  await worker.recover();
+  await worker.tick({ manual: true });
+  assert.equal(h.calls.current, 0, 'hard deadlines are checked before the immediate website recovery exception');
+});
+
+test('upgrade removes only the exact version 0.1.0 ordinary 403 cooldown', async () => {
+  const saved = connectedState('game');
+  const legacyMessage = 'VRChat 暂时拒绝访问；请到官网检查登录或网页验证，稍后自动重试。';
+  saved.connection = {
+    ...saved.connection, status: 'retrying', message: legacyMessage, stale: true,
+    retryUntil: T0 + 15 * MINUTE, nextAttemptAt: T0 + 15 * MINUTE,
+  };
+  const h = harness({ saved });
+  const worker = h.worker();
+  await worker.recover();
+  const restored = await worker.getState();
+  assert.equal(restored.connection.retryUntil, 0);
+  assert.equal(restored.connection.errorKind, 'http');
+  assert.equal(restored.connection.errorStatus, 403);
+  await worker.tick();
+  assert.equal(h.calls.current, 0, 'the stored automatic schedule is preserved');
+  await worker.tick({ manual: true });
+  assert.equal(h.calls.current, 1);
+  assert.equal(h.disk.connection.status, 'connected');
+  assert.deepEqual(h.notices, []);
+
+  for (const message of [
+    'VRChat 请求限流；已暂停请求，等待后自动重试。',
+    'Unknown legacy failure',
+    legacyMessage + ' ',
+  ]) {
+    const legacy = structuredClone(saved);
+    legacy.connection.message = message;
+    assert.equal(restoreState(legacy).connection.retryUntil, saved.connection.retryUntil);
+  }
+  const current = structuredClone(saved);
+  current.connection.errorKind = 'http';
+  current.connection.errorStatus = 403;
+  assert.equal(restoreState(current).connection.retryUntil, saved.connection.retryUntil,
+    'a modern 403 with a real Retry-After must not undergo the legacy migration');
+});
+
+test('old version 0.1.0 rate limiting remains enforced after upgrade and browser restart', async () => {
+  const saved = connectedState();
+  saved.connection = {
+    ...saved.connection, status: 'retrying', stale: true,
+    message: 'VRChat 请求限流；已暂停请求，等待后自动重试。',
+    retryUntil: T0 + 7 * MINUTE, nextAttemptAt: T0 + 7 * MINUTE,
+  };
+  const h = harness({ saved });
+  const worker = h.worker();
+  await worker.recover({ startup: true });
+  await worker.tick({ manual: true });
+  assert.equal(h.calls.current, 0);
+  h.setTime(T0 + 7 * MINUTE);
+  await worker.tick();
+  assert.equal(h.calls.current, 1);
+});
+
+test('failure diagnostics persist only bounded categories and HTTP statuses', async () => {
+  const h = harness();
+  h.source.current = async () => {
+    const error = new Error('synthetic private browser diagnostic');
+    error.kind = 'synthetic private browser category';
+    error.status = 'synthetic private status';
+    throw error;
+  };
+  const worker = h.worker();
+  await worker.tick();
+  assert.equal(h.disk.connection.errorKind, 'network');
+  assert.equal(h.disk.connection.errorStatus, 0);
+  assert.equal(JSON.stringify(h.disk).includes('synthetic private'), false);
+
+  const saved = h.disk;
+  saved.connection.errorKind = 'http';
+  saved.connection.errorStatus = 99999;
+  assert.equal(restoreState(saved).connection.errorStatus, 0);
+  saved.connection.errorKind = 'synthetic private category';
+  saved.connection.errorStatus = 403;
+  const restored = restoreState(saved);
+  assert.equal(restored.connection.errorKind, null);
+  assert.equal(restored.connection.errorStatus, 0);
+});
+
 test('a network failure keeps the cached online state and recovery does not fabricate a logout', async () => {
   const h = harness({ saved: connectedState('game') });
   h.source.current = async () => { throw new ApiError('http', 503); };
@@ -193,14 +376,13 @@ test('a network failure keeps the cached online state and recovery does not fabr
 
 for (const [name, mutate] of [
   ['a missing array', raw => { delete raw.offlineFriends; }],
-  ['conflicting online/offline membership', raw => { raw.onlineFriends = [FRIEND]; }],
-  ['a friend absent from every presence array', raw => { raw.offlineFriends = []; }],
+  ['an invalid friend ID', raw => { raw.offlineFriends = ['invalid']; }],
 ]) {
   test(`API schema failure with ${name} preserves the last complete snapshot`, async () => {
     const raw = payload();
     mutate(raw);
     let requests = 0;
-    const api = createApi({ fetchImpl: async () => { requests++; return response(raw); } });
+    const api = createApi({ requestImpl: async () => { requests++; return raw; } });
     const h = harness({ api, saved: connectedState('game') });
     const worker = h.worker();
     await worker.tick();
@@ -212,14 +394,32 @@ for (const [name, mutate] of [
   });
 }
 
+for (const [name, mutate] of [
+  ['conflicting online/offline membership', raw => { raw.onlineFriends = [FRIEND]; }],
+  ['a friend absent from every presence array', raw => { raw.offlineFriends = []; }],
+]) {
+  test(`ambiguous presence with ${name} becomes unknown without inventing a logout`, async () => {
+    const raw = payload();
+    mutate(raw);
+    const api = createApi({ requestImpl: async () => raw });
+    const h = harness({ api, saved: connectedState('game') });
+    const worker = h.worker();
+    await worker.tick();
+    assert.equal(h.disk.connection.status, 'connected');
+    assert.equal(h.disk.accounts[OWNER_A].friends[0].state, 'unknown');
+    assert.deepEqual(h.disk.accounts[OWNER_A].events, []);
+    assert.deepEqual(h.notices, []);
+  });
+}
+
 test('an HTTP 200 two-factor challenge hides cached account data and a new account gets separate rules', async () => {
   let raw = { requiresTwoFactorAuth: ['totp'] };
-  const api = createApi({ fetchImpl: async url => {
-    const parsed = new URL(url);
+  const api = createApi({ requestImpl: async path => {
+    const parsed = new URL(path, 'https://synthetic.invalid/');
     if (parsed.pathname.endsWith('/friends')) {
-      return response(parsed.searchParams.get('offline') === 'true' ? [] : [{ id: FRIEND, displayName: 'Other account friend' }]);
+      return parsed.searchParams.get('offline') === 'true' ? [] : [{ id: FRIEND, displayName: 'Other account friend' }];
     }
-    return response(raw);
+    return raw;
   } });
   const h = harness({ api });
   const worker = h.worker();

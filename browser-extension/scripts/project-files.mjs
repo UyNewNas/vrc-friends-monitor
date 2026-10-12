@@ -11,6 +11,8 @@ export const RUNTIME_FILES = Object.freeze([
   "manifest.json",
   "background.js",
   "api.js",
+  "session.js",
+  "site-bridge.js",
   "core.js",
   "monitor.js",
   "popup.html",
@@ -28,6 +30,7 @@ export const TOOL_FILES = Object.freeze([
   "scripts/check.mjs",
   "scripts/package.mjs",
   "scripts/ui-smoke.mjs",
+  "scripts/session-smoke.mjs",
 ]);
 
 export function readSafeFile(relativePath, root = EXTENSION_ROOT) {
