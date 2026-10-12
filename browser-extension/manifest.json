@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "VRC Friends Monitor",
+  "version": "0.1.0",
+  "description": "通过官网会话定时查看 VRChat 好友状态，提供按好友设置的上线、下线通知和本地记录。",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": ["https://vrchat.com/*", "https://api.vrchat.cloud/*"],
+  "incognito": "not_allowed",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "VRC Friends Monitor", "default_popup": "popup.html" },
+  "options_ui": { "page": "dashboard.html", "open_in_tab": true },
+  "icons": {
+    "16": "icons/icon16.png", "32": "icons/icon32.png",
+    "48": "icons/icon48.png", "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://vrchat.com https://api.vrchat.cloud; img-src 'self' data:; style-src 'self'; base-uri 'none'"
+  }
+}

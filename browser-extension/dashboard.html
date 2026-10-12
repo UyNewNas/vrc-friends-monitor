@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#11141b">
+    <title>好友动态 · VRC 好友监控</title>
+    <link rel="stylesheet" href="ui.css">
+    <script src="ui.js" defer></script>
+  </head>
+  <body data-page="dashboard">
+    <a class="skip-link" href="#friendsSearch">跳到好友搜索</a>
+    <div class="dashboard-shell">
+      <header class="app-header dashboard-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">v.</span>
+          <div><div class="brand-name">VRC 好友动态</div><div class="eyebrow">BROWSER EDITION</div></div>
+        </div>
+        <div class="account-chip"><span class="account-icon" aria-hidden="true">◌</span><span id="accountName">未连接账号</span></div>
+      </header>
+
+      <main>
+        <div class="page-heading">
+          <div><div class="eyebrow accent-text">与你在意的人保持连接</div><h1>好友动态<span class="title-period" aria-hidden="true">.</span></h1><p class="page-description">看看谁在游戏里，记录上线与离线，按好友设置提醒。</p></div>
+          <div class="heading-actions">
+            <button id="openLoginButton" class="button button-secondary" type="button">VRChat 官网 <span aria-hidden="true">↗</span></button>
+            <button id="refreshButton" class="button button-primary" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7.5a7.5 7.5 0 0 1 12.7-1L20 8M4 16l1.2 1.5a7.5 7.5 0 0 0 12.7-1"/></svg><span id="refreshLabel">立即同步</span></button>
+          </div>
+        </div>
+
+        <section class="overview-grid" aria-label="监控概览">
+          <div class="connection-panel">
+            <div class="connection-line"><span id="statusDot" class="status-dot status-idle" aria-hidden="true"></span><h2 id="connectionTitle">正在读取状态</h2><span id="staleBadge" class="badge badge-warning" hidden>数据待更新</span></div>
+            <p id="connectionMessage" class="connection-message">正在连接扩展后台…</p>
+            <p id="lastSync" class="meta-text">尚未同步</p>
+          </div>
+          <div class="summary-grid">
+            <div class="summary-card"><span class="summary-label"><span class="mini-dot dot-game" aria-hidden="true"></span>游戏在线</span><strong id="gameCount">—</strong><span class="summary-footnote">当前在 VRChat 游戏中</span></div>
+            <div class="summary-card"><span class="summary-label"><span class="mini-dot dot-web" aria-hidden="true"></span>网页活跃</span><strong id="webCount">—</strong><span class="summary-footnote">网页或其他客户端活跃</span></div>
+            <div class="summary-card"><span class="summary-label"><span class="mini-dot dot-offline" aria-hidden="true"></span>离线</span><strong id="offlineCount">—</strong><span class="summary-footnote">当前没有在线状态</span></div>
+          </div>
+        </section>
+
+        <p id="notificationWarning" class="inline-warning" role="status" hidden></p>
+        <p id="actionFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
+
+        <section class="settings-bar" aria-label="监控设置">
+          <div class="monitor-control"><div><h2>后台监控</h2><p id="monitorHint" class="meta-text">读取设置中</p></div><button id="toggleMonitoring" class="button button-secondary button-small" type="button" aria-pressed="false" disabled>读取设置…</button></div>
+          <div class="setting-control"><label for="intervalMinutes">同步间隔</label><select id="intervalMinutes" disabled><option value="1">每 1 分钟</option><option value="2">每 2 分钟</option><option value="5">每 5 分钟</option></select></div>
+          <label class="switch-control" for="notificationsEnabled"><span><strong>桌面通知</strong><span class="meta-text">按每位好友的提醒设置发送</span></span><input id="notificationsEnabled" class="switch-input" type="checkbox" role="switch" disabled><span class="switch-track" aria-hidden="true"></span></label>
+        </section>
+
+        <div class="workspace-grid">
+          <section class="panel friends-panel" aria-labelledby="friendsTitle">
+            <div class="panel-heading"><div><h2 id="friendsTitle">好友列表 <span id="selectedCount" class="count-badge">0</span></h2><p id="friendsSummary" class="meta-text">登录后载入好友列表</p></div><span class="panel-kicker">FRIENDS</span></div>
+            <div class="friends-toolbar">
+              <label class="search-field" for="friendsSearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="friendsSearch" type="search" placeholder="搜索昵称或用户 ID" autocomplete="off" spellcheck="false" aria-label="搜索好友昵称或用户 ID"></label>
+              <label class="visually-hidden" for="friendState">筛选好友状态</label><select id="friendState"><option value="all">全部状态</option><option value="game">游戏在线</option><option value="web">网页活跃</option><option value="offline">离线</option><option value="unknown">状态未知</option></select>
+            </div>
+            <div class="list-options"><label class="checkbox-label"><input id="selectedOnly" type="checkbox">仅显示已设置提醒的好友</label><span class="meta-text rule-column-label">游戏状态提醒</span></div>
+            <div id="friendsList" class="friend-list dashboard-friend-list" role="list" aria-busy="true"></div>
+            <p class="panel-note">勾选「上线」或「离线」来关注好友。网页或其他客户端活跃会单独标注，不作为游戏上线。</p>
+          </section>
+
+          <section class="panel history-panel" aria-labelledby="historyTitle">
+            <div class="panel-heading"><div><h2 id="historyTitle">动态记录</h2><p id="historySummary" class="meta-text">记录游戏上线与离线变化</p></div><button id="clearHistoryButton" class="text-button muted-button" type="button" disabled>清空</button></div>
+            <div class="history-toolbar"><label class="search-field" for="historySearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="historySearch" type="search" placeholder="搜索昵称、ID 或上线 / 离线" autocomplete="off" spellcheck="false" aria-label="搜索动态记录"></label></div>
+            <div id="historyList" class="history-list" role="list" aria-busy="true"></div>
+            <button id="loadMoreHistory" class="text-button load-more" type="button" hidden>显示更多记录</button>
+            <p class="panel-note">记录来自定时同步，时间为检测到变化的时间。</p>
+          </section>
+        </div>
+
+        <footer class="dashboard-footer"><p>使用 VRChat 官网登录；好友提醒和动态记录保存在本机扩展中。</p><p>浏览器关闭后停止监控。休眠或断网可能使同步延迟。</p></footer>
+      </main>
+    </div>
+
+    <dialog id="clearHistoryDialog" class="confirm-dialog" aria-labelledby="clearHistoryTitle" aria-describedby="clearHistoryDescription">
+      <form method="dialog"><h2 id="clearHistoryTitle">清空当前账号的动态记录？</h2><p id="clearHistoryDescription">已记录的上线与离线动态将被删除，之后仍会记录新的变化。</p><div class="dialog-actions"><button class="button button-secondary" type="submit" value="cancel">保留记录</button><button id="confirmClearHistory" class="button button-danger" type="submit" value="confirm">清空记录</button></div></form>
+    </dialog>
+  </body>
+</html>

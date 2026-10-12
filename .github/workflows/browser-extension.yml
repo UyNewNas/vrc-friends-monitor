@@ -1,0 +1,75 @@
+name: Browser extension
+
+on:
+  push:
+    branches:
+      - main
+      - feature/browser-extension
+      - feature/browser-extension/**
+    paths:
+      - browser-extension/**
+      - scripts/Check-Privacy.ps1
+      - .github/workflows/browser-extension.yml
+      - .github/workflows/ci.yml
+      - LICENSE
+  pull_request:
+    paths:
+      - browser-extension/**
+      - scripts/Check-Privacy.ps1
+      - .github/workflows/browser-extension.yml
+      - .github/workflows/ci.yml
+      - LICENSE
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-extension-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extension:
+    name: Offline extension checks and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: browser-extension
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Check manifest, packaged resources and permissions
+        run: npm run check
+      - name: Run offline behavior tests
+        run: npm test
+      - name: Exercise popup and dashboard with a synthetic runtime
+        run: npm run smoke
+      - name: Upload synthetic UI previews
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vrc-friends-monitor-synthetic-ui-previews
+          path: artifacts/preview/browser-extension-*-synthetic.png
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build and verify runtime-only package
+        run: npm run package
+      - name: Upload verified extension package only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vrc-friends-monitor-chromium
+          path: |
+            artifacts/packages/*-chromium.zip
+            artifacts/packages/*-chromium.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-compatibility:
+    name: Existing Windows build, tests and privacy audit
+    uses: ./.github/workflows/ci.yml

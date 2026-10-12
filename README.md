@@ -3,6 +3,25 @@
 [![CI](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+## 浏览器扩展开发分支
+
+`feature/browser-extension` 新增 **Chrome / Edge 扩展版 0.1.0**。在日常浏览器的 VRChat 官网完成登录后，扩展使用该浏览器管理的会话定时同步好友状态。第一版提供完整好友面板、按好友设置上线 / 下线通知、搜索筛选、本地动态记录，以及后台休眠和断线后的恢复机制。
+
+安装、权限、数据保存方式和已知限制见 **[浏览器扩展使用说明](browser-extension/README.md)**。可直接在 Chrome / Edge 的扩展管理页加载 `browser-extension/` 文件夹，也可以下载本分支 [Browser extension 工作流](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/browser-extension.yml) 检查通过后生成的 ZIP。
+
+这版采用定时同步，默认间隔为 1 分钟；浏览器关闭、电脑休眠或两次同步之间的短暂变化无法完整记录。首次连接和中断恢复会静默建立基线。它不保存账号密码，也不将认证 Cookie 复制到扩展存储。真实账号登录、浏览器策略和长时间运行仍需安装后验证；离线测试只使用模拟账号和响应。
+
+```sh
+cd browser-extension
+npm run check
+npm test
+npm run package
+```
+
+开发检查需要 Node.js 22 或更新版本，无需安装 npm 依赖。扩展 CI 同时运行现有 Windows 构建和隐私检查。以下是原 Windows 客户端的说明。
+
+## Windows 客户端
+
 Windows 上的 VRChat 好友状态监控工具。可为每位好友分别设置上线、下线通知，在桌面右下角显示小弹窗，并在程序内查看完整的本地日志。
 
 ## 功能

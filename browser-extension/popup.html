@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#11141b">
+    <title>VRC 好友动态</title>
+    <link rel="stylesheet" href="ui.css">
+    <script src="ui.js" defer></script>
+  </head>
+  <body data-page="popup">
+    <main class="popup-shell">
+      <header class="app-header popup-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">v.</span>
+          <div>
+            <div class="brand-name">VRC 好友动态</div>
+            <div class="eyebrow">跟随官网登录会话</div>
+          </div>
+        </div>
+        <button id="refreshButton" class="icon-button" type="button" aria-label="立即同步好友状态" title="立即同步">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7.5a7.5 7.5 0 0 1 12.7-1L20 8M4 16l1.2 1.5a7.5 7.5 0 0 0 12.7-1"/></svg>
+        </button>
+      </header>
+
+      <section class="connection-panel popup-connection" aria-labelledby="connectionTitle">
+        <div class="connection-line">
+          <span id="statusDot" class="status-dot status-idle" aria-hidden="true"></span>
+          <h1 id="connectionTitle">正在读取状态</h1>
+          <span id="staleBadge" class="badge badge-warning" hidden>待更新</span>
+        </div>
+        <p id="connectionMessage" class="connection-message">正在连接扩展后台…</p>
+        <p id="lastSync" class="meta-text">尚未同步</p>
+        <button id="openLoginButton" class="text-button login-button" type="button">打开 VRChat 官网 <span aria-hidden="true">↗</span></button>
+      </section>
+
+      <p id="notificationWarning" class="inline-warning" role="status" hidden></p>
+      <p id="actionFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
+
+      <section class="summary-grid popup-summary" aria-label="好友状态概览">
+        <div class="summary-card"><span class="summary-label"><span class="mini-dot dot-game" aria-hidden="true"></span>游戏在线</span><strong id="gameCount">—</strong></div>
+        <div class="summary-card"><span class="summary-label"><span class="mini-dot dot-web" aria-hidden="true"></span>网页活跃</span><strong id="webCount">—</strong></div>
+        <div class="summary-card"><span class="summary-label"><span class="mini-dot dot-offline" aria-hidden="true"></span>离线</span><strong id="offlineCount">—</strong></div>
+      </section>
+
+      <section class="popup-friends" aria-labelledby="popupFriendsTitle">
+        <div class="section-heading"><h2 id="popupFriendsTitle">关注中的好友</h2><span id="selectedCount" class="count-badge">0</span></div>
+        <p id="popupFriendsHint" class="meta-text">完整面板中可设置每位好友的提醒。</p>
+        <div id="friendsList" class="friend-list compact-list" role="list" aria-busy="true"></div>
+      </section>
+
+      <button id="openDashboardButton" class="button button-primary button-wide" type="button">打开完整面板 <span aria-hidden="true">↗</span></button>
+      <footer class="popup-footer">
+        <button id="toggleMonitoring" class="text-button" type="button" aria-pressed="false" disabled>读取监控设置…</button>
+        <span id="accountName" class="account-name" title="当前 VRChat 账号">未连接账号</span>
+      </footer>
+    </main>
+  </body>
+</html>
