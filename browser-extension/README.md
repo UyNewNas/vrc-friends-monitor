@@ -1,6 +1,6 @@
 # VRC 好友监控 · 浏览器扩展
 
-这是 `feature/browser-extension` 分支上的 Chromium Manifest V3 版本，适用于 Chrome / Edge 120 及以上版本。目前通过「加载已解压的扩展程序」安装，尚未发布到浏览器扩展商店。
+这是本项目的主要客户端，采用 Chromium Manifest V3，适用于 Chrome / Edge 120 及以上版本。目前通过「加载已解压的扩展程序」安装，尚未发布到浏览器扩展商店。
 
 扩展通过同一浏览器配置文件中已打开的 VRChat 官网标签页，定时同步好友状态。请保留至少一个官网 `/home` 页面；它可以放在后台。账号密码、验证码都在官网输入。扩展界面不收集密码，也不读取、导出或复制登录 Cookie。
 
@@ -130,4 +130,4 @@ npm run package
 5. 关闭官网标签页，确认旧结果被标记待更新；重新打开并登录后确认恢复。关闭并重新打开浏览器及官网，确认设置与历史仍在，并能重新同步。
 6. 暂停后确认状态不再刷新；恢复后先建立基准。切换官网账号后，确认显示和规则随新账号切换。
 
-提交代码前还应遵循仓库 [贡献指南](https://github.com/UyNewNas/vrc-friends-monitor/blob/feature/browser-extension/CONTRIBUTING.md) 与 [隐私检查](https://github.com/UyNewNas/vrc-friends-monitor/blob/feature/browser-extension/scripts/Check-Privacy.ps1)。测试、错误报告及截图仅使用合成或已脱敏的数据，不提交真实好友日志、浏览器配置文件或身份凭据。
+提交代码前还应遵循仓库 [贡献指南](https://github.com/UyNewNas/vrc-friends-monitor/blob/main/CONTRIBUTING.md) 与 [隐私检查](https://github.com/UyNewNas/vrc-friends-monitor/blob/main/scripts/Check-Privacy.ps1)。测试、错误报告及截图仅使用合成或已脱敏的数据，不提交真实好友日志、浏览器配置文件或身份凭据。
