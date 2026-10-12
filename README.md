@@ -4,7 +4,7 @@
 [![Windows compatibility CI](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-VRChat 好友状态监控工具。**浏览器扩展是项目的主要版本，后续功能优先围绕 Chrome / Edge 扩展开发。** 当前扩展版本为 **0.1.1**，使用日常浏览器中的 VRChat 官网登录会话，提供好友状态、按好友设置的上下线提醒和本地动态记录。
+VRChat 好友状态监控工具。**浏览器扩展是项目的主要版本，后续功能优先围绕 Chrome / Edge 扩展开发。** 当前扩展版本为 **0.1.2**，使用日常浏览器中的 VRChat 官网登录会话，提供好友状态、按好友设置的上下线提醒和本地动态记录。
 
 Windows 客户端的源码、既有下载和兼容性检查继续保留，使用与构建说明见 [Windows 客户端文档](docs/WINDOWS_CLIENT.md)。
 
@@ -13,10 +13,11 @@ Windows 客户端的源码、既有下载和兼容性检查继续保留，使用
 适用于 **Chrome / Edge 120 及以上版本**，目前通过「加载已解压的扩展程序」安装。
 
 1. 打开 [Browser extension 工作流](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/browser-extension.yml)，选择对应分支或 PR 中已通过检查的构建，下载 `vrc-friends-monitor-chromium` artifact。
-2. 解压外层 ZIP，再解压其中的 `VRC-Friends-Monitor-0.1.1-chromium.zip`。安装目录应直接包含 `manifest.json`。
+2. 解压外层 ZIP，再解压其中的 `VRC-Friends-Monitor-0.1.2-chromium.zip`。安装目录应直接包含 `manifest.json`。
 3. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`，开启「开发者模式」，点击「加载已解压的扩展程序」并选择安装目录。
 4. 在同一个浏览器配置文件中打开 [VRChat 官网](https://vrchat.com/home)，登录并完成官网要求的验证。**如果官网之前已经打开，请刷新一次，并保留这个标签页。**
 5. 打开扩展，点击「立即同步」，然后在完整面板中为需要关注的好友勾选上线 / 离线提醒。
+6. 点击「发送测试通知」确认通知通道。若显示浏览器已接受但没有横幅，请检查系统通知中心、Chrome / Edge 的通知横幅设置及勿扰模式。
 
 也可以从当前分支下载源码，直接加载 [browser-extension](browser-extension) 文件夹；安装使用无需 Node.js 或构建步骤。更新时覆盖原扩展目录，在扩展管理页点击「重新加载」，**再刷新官网标签页一次**。
 
@@ -26,11 +27,12 @@ Windows 客户端的源码、既有下载和兼容性检查继续保留，使用
 
 - 查看游戏在线、网页活跃、离线和状态未知的好友，支持名称 / ID 搜索及状态筛选。
 - 为每位好友分别设置游戏上线、离线的桌面通知。
+- 独立发送测试通知，查看最近发送结果和已启用提醒的好友数量。
 - 在完整面板查看本地动态记录；规则和历史按账号区分。
 - 默认每分钟同步一次，可调整为 2 或 5 分钟；支持暂停和手动同步。
 - 保存重试计划，在后台恢复、断网恢复和官网页面重新就绪后继续同步。
 
-首次同步、手动同步、切换账号以及中断后的首次恢复会静默建立基准，避免一次性补发上下线通知。个别好友的状态分类暂时缺失或冲突时显示「状态未知」，不会据此制造上线或离线记录。
+正常连接、监控启用且状态基准未过期时，定时同步和手动「立即同步」都会记录检测到的上下线变化，并按好友规则提醒。首次同步、暂停期间手动查看、切换账号以及中断后的首次恢复会静默建立基准，避免一次性补发上下线通知。个别好友的状态分类暂时缺失或冲突时显示「状态未知」，不会据此制造上线或离线记录。
 
 ## 运行条件
 
@@ -40,9 +42,11 @@ Windows 客户端的源码、既有下载和兼容性检查继续保留，使用
 
 0.1.1 使用官网页面中的同源请求修复了旧版后台请求可能在官网已登录时仍返回 403 的连接路径。官网自身的登录与验证仍由用户在正常页面中完成。
 
+0.1.2 修复了正常连接时手动同步更新基准却遗漏通知的问题，并增加通知测试与发送状态。浏览器接受通知只表示 API 提交成功；系统是否显示横幅仍取决于通知与勿扰设置，详见[通知排查](browser-extension/README.md#通知排查与测试)。
+
 ## 本地数据与隐私
 
-扩展只在当前浏览器配置文件的本地存储中保存必要的账号 / 好友 ID、显示名、状态、提醒规则、有限历史与重试信息。不收集密码或验证码，不读取、复制或保存认证 Cookie，不保存完整登录响应，不上传好友动态记录。
+扩展只在当前浏览器配置文件的本地存储中保存必要的账号 / 好友 ID、显示名、状态、提醒规则、有限历史、重试信息和受控的通知发送状态与时间。不收集密码或验证码，不读取、复制或保存认证 Cookie，不保存完整登录响应，不上传好友动态记录。
 
 网站访问范围仅限 `vrchat.com`。官网页面内的隔离脚本只处理当前账号和好友分页两类只读请求，返回前先裁剪数据。具体权限及清理方法见 [扩展本地数据说明](browser-extension/README.md#本地数据与权限)。
 
@@ -59,7 +63,7 @@ npm run smoke
 npm run package
 ```
 
-两项浏览器烟测需要已安装的 Chrome / Chromium，真实扩展会话烟测还需要 OpenSSL。测试使用临时配置文件和合成数据；会话烟测实际安装扩展，通过仅本地可达的 HTTPS 测试站点验证消息、浏览器 Cookie、同源请求与好友分页。
+两项浏览器烟测需要已安装的 Chrome / Chromium，真实扩展会话烟测还需要 OpenSSL。测试使用临时配置文件和合成数据；会话烟测实际安装扩展，通过仅本地可达的 HTTPS 测试站点验证消息、浏览器 Cookie、同源请求、好友分页、测试通知，以及关闭面板后由真实定时器触发的好友通知。无头浏览器测试验证通知创建，不证明 Windows 桌面横幅可见。
 
 [Browser extension CI](https://github.com/UyNewNas/vrc-friends-monitor/actions/workflows/browser-extension.yml) 执行扩展检查、测试、界面 / 会话烟测和打包，并继续执行 Windows 构建与隐私审计。检查通过的扩展 ZIP 和 SHA-256 校验文件作为 Actions 产物提供。
 

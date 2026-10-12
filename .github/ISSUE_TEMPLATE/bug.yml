@@ -17,7 +17,7 @@ body:
     id: version
     attributes:
       label: 扩展或程序版本
-      placeholder: 扩展 0.1.1 / Windows 客户端 1.4.2
+      placeholder: 扩展 0.1.2 / Windows 客户端 1.4.2
     validations:
       required: true
   - type: input

@@ -27,6 +27,7 @@
   let mutationSequence = 0;
   let settingsPending = false;
   let refreshPending = false;
+  let notificationTestPending = false;
   let historyPending = false;
   let clearHistoryAccountId = null;
   let historyLimit = 150;
@@ -234,9 +235,6 @@
     const login = byId("openLoginButton");
     if (isPopup) login.hidden = !!account && !["auth_required", "retrying"].includes(status);
     else login.textContent = account ? "VRChat 官网 ↗" : "登录 VRChat ↗";
-    const warning = byId("notificationWarning");
-    warning.hidden = !account || !state.notificationWarning;
-    warning.textContent = account ? safeText(state.notificationWarning) : "";
     const isSyncing = refreshPending || status === "syncing";
     byId("refreshButton").disabled = isSyncing;
     byId("refreshButton").setAttribute("aria-busy", String(isSyncing));
@@ -266,6 +264,51 @@
     setText("monitorHint", enabled ? "按设定间隔自动同步" : "自动同步已暂停，可手动同步");
     const clearHistory = byId("clearHistoryButton");
     if (clearHistory) clearHistory.disabled = historyPending || !accountFor() || currentEvents().length === 0;
+  }
+
+  function renderNotifications() {
+    const button = byId("testNotification");
+    button.disabled = notificationTestPending;
+    button.setAttribute("aria-busy", String(notificationTestPending));
+    button.textContent = notificationTestPending ? "发送中…" : "发送测试通知";
+    if (!state) return;
+
+    const account = accountFor();
+    const selected = currentFriends().filter((friend) => follows(friend.id)).length;
+    const hints = [];
+    if (!account) {
+      hints.push("好友提醒需先登录并完成同步；测试通知无需登录。");
+    } else {
+      hints.push(`已设置提醒 ${selected} 位好友。`);
+      if (!state.settings?.enabled) hints.push("监控已暂停，手动同步也不会发送好友提醒。");
+      if (!state.settings?.notificationsEnabled) hints.push("桌面通知已关闭，好友变化不会发送通知。");
+      if (!selected) hints.push(isPopup ? "请打开完整面板，为好友勾选「上线」或「离线」。" : "请为好友勾选「上线」或「离线」。");
+      else if (state.settings?.enabled && state.settings?.notificationsEnabled) hints.push("检测到所选游戏状态变化时发送提醒。");
+    }
+    setText("notificationRuleHint", hints.join(""));
+
+    const delivery = state.notificationDelivery || {};
+    const status = ["accepted", "blocked", "failed"].includes(delivery.status) ? delivery.status : "idle";
+    const source = delivery.source === "test" ? "测试通知" : delivery.source === "friend" ? "好友通知" : "通知";
+    const labels = {
+      idle: "尚未尝试发送通知",
+      accepted: `浏览器已接受${source}`,
+      blocked: "浏览器通知权限未开启",
+      failed: "通知未能交给浏览器，请重试测试通知",
+    };
+    const timestamp = validTimestamp(delivery.lastAttemptAt) ? ` · 最近尝试 ${dateTime(delivery.lastAttemptAt)}` : "";
+    setText("notificationStatus", labels[status] + timestamp);
+    byId("notificationStatus").dataset.status = status;
+    setText("notificationHelp", status === "accepted"
+      ? "若未看到横幅，请检查系统通知中心、浏览器通知横幅设置和勿扰模式。"
+      : status === "blocked"
+        ? "请在浏览器和系统设置中允许通知，再发送测试通知。"
+        : status === "failed"
+          ? "请检查浏览器和系统通知设置；测试通知不受登录或好友提醒设置影响。"
+          : "测试通知不受登录、监控开关或好友提醒设置影响。");
+    const warning = byId("notificationWarning");
+    warning.textContent = safeText(state.notificationWarning);
+    warning.hidden = !warning.textContent;
   }
 
   function renderSummary() {
@@ -406,6 +449,7 @@
   function render() {
     renderConnection();
     renderSettings();
+    renderNotifications();
     renderSummary();
     renderFriends();
     renderHistory();
@@ -488,6 +532,28 @@
     catch (error) { showFeedback(safeText(error?.message, "无法打开页面，请重试。"), true); }
   }
 
+  async function testNotification() {
+    if (notificationTestPending) return;
+    notificationTestPending = true;
+    mutationSequence += 1;
+    const startedAt = Date.now();
+    const epoch = accountEpoch;
+    renderNotifications();
+    try {
+      const response = await send({ type: "testNotification" });
+      if (response.state && epoch === accountEpoch) applyState(response.state);
+    } catch (error) {
+      showFeedback(safeText(error?.message, "测试通知未完成，请稍后重试。"), true);
+    } finally {
+      // Keep accidental double clicks from creating repeated test notifications.
+      const remaining = 1000 - (Date.now() - startedAt);
+      if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+      notificationTestPending = false;
+      renderNotifications();
+      await loadState();
+    }
+  }
+
   async function clearHistory(accountId) {
     if (!accountId || accountId !== accountFor()?.id || historyPending) return;
     const epoch = accountEpoch;
@@ -508,6 +574,7 @@
   }
 
   byId("refreshButton").addEventListener("click", refresh);
+  byId("testNotification").addEventListener("click", testNotification);
   byId("openLoginButton").addEventListener("click", () => openPage("openLogin"));
   byId("openDashboardButton")?.addEventListener("click", () => openPage("openDashboard"));
   byId("toggleMonitoring").addEventListener("click", () => updateSettings({ enabled: state?.settings?.enabled !== true }));

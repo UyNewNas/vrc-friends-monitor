@@ -42,13 +42,19 @@
           </div>
         </section>
 
-        <p id="notificationWarning" class="inline-warning" role="status" hidden></p>
         <p id="actionFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
 
         <section class="settings-bar" aria-label="监控设置">
           <div class="monitor-control"><div><h2>后台监控</h2><p id="monitorHint" class="meta-text">读取设置中</p></div><button id="toggleMonitoring" class="button button-secondary button-small" type="button" aria-pressed="false" disabled>读取设置…</button></div>
           <div class="setting-control"><label for="intervalMinutes">同步间隔</label><select id="intervalMinutes" disabled><option value="1">每 1 分钟</option><option value="2">每 2 分钟</option><option value="5">每 5 分钟</option></select></div>
           <label class="switch-control" for="notificationsEnabled"><span><strong>桌面通知</strong><span class="meta-text">按每位好友的提醒设置发送</span></span><input id="notificationsEnabled" class="switch-input" type="checkbox" role="switch" disabled><span class="switch-track" aria-hidden="true"></span></label>
+        </section>
+
+        <section class="notification-panel" aria-labelledby="notificationTitle">
+          <div class="notification-heading"><div><h2 id="notificationTitle">通知检查</h2><p id="notificationRuleHint" class="meta-text">测试通知无需等待好友状态变化。</p></div><button id="testNotification" class="button button-secondary button-small" type="button">发送测试通知</button></div>
+          <p id="notificationStatus" class="notification-status" role="status" aria-live="polite">尚未尝试发送通知</p>
+          <p id="notificationHelp" class="meta-text">测试通知不受登录、监控开关或好友提醒设置影响。</p>
+          <p id="notificationWarning" class="inline-warning" role="status" hidden></p>
         </section>
 
         <div class="workspace-grid">
@@ -68,7 +74,7 @@
             <div class="history-toolbar"><label class="search-field" for="historySearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="historySearch" type="search" placeholder="搜索昵称、ID 或上线 / 离线" autocomplete="off" spellcheck="false" aria-label="搜索动态记录"></label></div>
             <div id="historyList" class="history-list" role="list" aria-busy="true"></div>
             <button id="loadMoreHistory" class="text-button load-more" type="button" hidden>显示更多记录</button>
-            <p class="panel-note">记录来自定时同步，时间为检测到变化的时间。</p>
+            <p class="panel-note">记录来自好友状态同步，时间为检测到变化的时间。</p>
           </section>
         </div>
 

@@ -31,14 +31,29 @@ export function createBackground(browser = chrome) {
       const when = Math.max(Date.now() + 1000, nextAttemptAt);
       if (!next || Math.abs(next.scheduledTime - when) > 1000) await browser.alarms.create(SYNC_ALARM, { when });
     },
-    notify: async change => {
-      const permission = await browser.notifications.getPermissionLevel();
-      if (permission !== 'granted') throw new Error('notifications_disabled');
-      await browser.notifications.create(`vrc:${change.id}`, {
-        type: 'basic', iconUrl: browser.runtime.getURL('icons/icon128.png'),
-        title: change.online ? '好友进入 VRChat 游戏' : '好友离开 VRChat 游戏',
-        message: change.name, contextMessage: '由定时同步检测到', silent: true,
-      });
+    notify: async (change, { test = false } = {}) => {
+      let permission = 'unknown';
+      try {
+        const level = await browser.notifications.getPermissionLevel();
+        if (['granted', 'denied'].includes(level)) permission = level;
+        if (permission !== 'granted') throw new Error('notifications_unavailable');
+        const id = await browser.notifications.create(test ? 'vrc:notification-test' : `vrc:${change.id}`, {
+          type: 'basic', iconUrl: browser.runtime.getURL('icons/icon128.png'),
+          title: test ? 'VRC Friends Monitor · 测试通知' : change.online ? '好友进入 VRChat 游戏' : '好友离开 VRChat 游戏',
+          message: test ? '如果你能看到这条消息，浏览器通知已到达。' : change.name,
+          contextMessage: test ? '通知通道测试，不会改变好友记录' : '由好友状态同步检测到',
+          silent: true,
+        });
+        // Chrome accepting a notification does not prove that the OS showed a
+        // banner. Report only the API result, never infer desktop visibility.
+        if (typeof id !== 'string' || !id) throw new Error('notification_not_created');
+        return { permission };
+      } catch {
+        // Never forward native error text into state or the extension UI.
+        throw Object.assign(new Error('notification_unavailable'), {
+          kind: permission === 'denied' ? 'blocked' : 'failed', permission,
+        });
+      }
     },
   });
 
@@ -56,6 +71,7 @@ export function createBackground(browser = chrome) {
       switch (message.type) {
         case 'getState': state = await monitor.getState(); break;
         case 'refresh': state = await monitor.tick({ manual: true }); break;
+        case 'testNotification': state = await monitor.testNotification(); break;
         case 'updateSettings': state = await monitor.updateSettings(message.settings); break;
         case 'setRule': state = await monitor.setRule(message); break;
         case 'clearHistory': state = await monitor.clearHistory(message.accountId); break;

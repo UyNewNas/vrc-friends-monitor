@@ -1,6 +1,6 @@
 {
   "name": "vrc-friends-monitor-browser-extension",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "VRChat 好友状态浏览器扩展的离线检查与打包工具",

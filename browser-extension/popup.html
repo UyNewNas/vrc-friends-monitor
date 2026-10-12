@@ -35,8 +35,15 @@
         <button id="openLoginButton" class="text-button login-button" type="button">打开 VRChat 官网 <span aria-hidden="true">↗</span></button>
       </section>
 
-      <p id="notificationWarning" class="inline-warning" role="status" hidden></p>
       <p id="actionFeedback" class="action-feedback" role="status" aria-live="polite" hidden></p>
+
+      <section class="notification-panel popup-notifications" aria-labelledby="notificationTitle">
+        <div class="notification-heading"><h2 id="notificationTitle">通知检查</h2><button id="testNotification" class="text-button" type="button">发送测试通知</button></div>
+        <p id="notificationRuleHint" class="meta-text">测试通知无需等待好友状态变化。</p>
+        <p id="notificationStatus" class="notification-status" role="status" aria-live="polite">尚未尝试发送通知</p>
+        <p id="notificationHelp" class="meta-text">测试通知不受登录、监控开关或好友提醒设置影响。</p>
+        <p id="notificationWarning" class="inline-warning" role="status" hidden></p>
+      </section>
 
       <section class="summary-grid popup-summary" aria-label="好友状态概览">
         <div class="summary-card"><span class="summary-label"><span class="mini-dot dot-game" aria-hidden="true"></span>游戏在线</span><strong id="gameCount">—</strong></div>

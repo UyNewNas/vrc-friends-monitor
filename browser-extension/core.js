@@ -8,6 +8,10 @@ export const DEFAULT_SETTINGS = Object.freeze({
   intervalMinutes: 1,
   notificationsEnabled: true,
 });
+export const NOTIFICATION_WARNINGS = Object.freeze({
+  blocked: '浏览器已禁用本扩展通知；请检查浏览器和系统通知设置。',
+  failed: '浏览器未能创建通知；状态与本地记录仍会更新，请发送测试通知重试。',
+});
 
 const ERROR_KINDS = new Set([
   'http', 'format', 'pagination', 'account_changed', 'timeout', 'network',
@@ -41,6 +45,20 @@ export function normalizeSettings(value = {}) {
   };
 }
 
+// Delivery diagnostics describe only the browser API result, never whether an
+// operating-system banner was actually visible. Ignore arbitrary stored text.
+export function normalizeNotificationDelivery(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const timestamp = value => Number.isFinite(value) && value >= 0 && value <= 8.64e15 ? value : null;
+  return {
+    status: ['idle', 'accepted', 'blocked', 'failed'].includes(source.status) ? source.status : 'idle',
+    source: ['test', 'friend'].includes(source.source) ? source.source : null,
+    lastAttemptAt: timestamp(source.lastAttemptAt),
+    lastAcceptedAt: timestamp(source.lastAcceptedAt),
+    permission: ['unknown', 'granted', 'denied'].includes(source.permission) ? source.permission : 'unknown',
+  };
+}
+
 export function emptyState() {
   return {
     schemaVersion: 1,
@@ -54,6 +72,7 @@ export function emptyState() {
       errorKind: null, errorStatus: 0,
     },
     notificationWarning: null,
+    notificationDelivery: normalizeNotificationDelivery(),
   };
 }
 
@@ -111,7 +130,12 @@ export function restoreState(raw) {
       state.connection.message = '上次官网同步被拒绝；请保留官网标签页，刷新一次后点击「立即同步」。';
     }
   }
-  if (raw.notificationWarning) state.notificationWarning = '浏览器通知不可用；状态与本地记录仍会更新。';
+  state.notificationDelivery = normalizeNotificationDelivery(raw.notificationDelivery);
+  if (['blocked', 'failed'].includes(state.notificationDelivery.status)) {
+    state.notificationWarning = NOTIFICATION_WARNINGS[state.notificationDelivery.status];
+  } else if (state.notificationDelivery.status !== 'accepted' && raw.notificationWarning) {
+    state.notificationWarning = '浏览器通知不可用；状态与本地记录仍会更新。';
+  }
   return state;
 }
 
@@ -175,5 +199,6 @@ export function publicState(state, now = Date.now()) {
     rules: account && state.connection.status !== 'auth_required' ? account.rules : {},
     events: account && state.connection.status !== 'auth_required' ? [...account.events].reverse() : [],
     notificationWarning: state.notificationWarning,
+    notificationDelivery: normalizeNotificationDelivery(state.notificationDelivery),
   });
 }

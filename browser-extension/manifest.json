@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VRC Friends Monitor",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "通过官网会话定时查看 VRChat 好友状态，提供按好友设置的上线、下线通知和本地记录。",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms", "notifications"],

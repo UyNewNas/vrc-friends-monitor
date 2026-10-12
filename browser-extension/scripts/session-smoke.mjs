@@ -152,6 +152,17 @@ async function waitFor(sessionId, expression, label, timeout = 12000) {
   throw new Error(`Installed extension did not reach expected state: ${label}`);
 }
 
+async function waitForFixture(predicate, label, timeout = 90000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    // Observe only the local server while every extension page is closed. No
+    // runtime call or debugging attachment keeps the service worker alive.
+    await delay(250);
+  }
+  throw new Error(`Installed extension did not reach expected state: ${label}`);
+}
+
 async function page(url) {
   const { targetId } = await send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
@@ -236,6 +247,37 @@ try {
   assert.equal(beforeReload.connection.stale, true, "Missing website transport is reported as stale");
   assert.equal(apiRequests.length, 0, "A missing website bridge makes no background API requests");
 
+  // The explicit test works before authentication and without friend rules,
+  // even when normal monitoring and automatic friend notifications are paused.
+  const paused = await evaluate(dashboard.sessionId,
+    "chrome.runtime.sendMessage({ type: 'updateSettings', settings: { enabled: false, notificationsEnabled: false } })");
+  assert.equal(paused.ok, true, "The notification test setup paused normal monitoring through the UI command");
+  assert.equal(await evaluate(dashboard.sessionId, "chrome.notifications.getPermissionLevel()"), "granted",
+    "The disposable profile grants the manifest's native notification permission");
+  await waitFor(dashboard.sessionId, "document.getElementById('testNotification')?.disabled === false", "notification test button ready");
+  await evaluate(dashboard.sessionId, "document.getElementById('testNotification').click()");
+  await waitFor(dashboard.sessionId,
+    `${stateExpression}.then(state => state?.notificationDelivery?.status === 'accepted' && state.notificationDelivery.source === 'test')`,
+    "native test notification accepted");
+  await waitFor(dashboard.sessionId,
+    "document.getElementById('notificationStatus')?.textContent.includes('浏览器已接受测试通知')",
+    "the notification diagnostic accurately reports browser acceptance");
+  await waitFor(dashboard.sessionId,
+    "chrome.notifications.getAll().then(value => Object.hasOwn(value, 'vrc:notification-test'))",
+    "Chrome registered the explicit test notification");
+  const testState = await evaluate(dashboard.sessionId, stateExpression);
+  assert.equal(testState.notificationDelivery.permission, "granted", "The test checked actual Chrome notification permission");
+  assert.ok(Number.isFinite(testState.notificationDelivery.lastAttemptAt) && Number.isFinite(testState.notificationDelivery.lastAcceptedAt),
+    "Notification attempt and acceptance timestamps are concrete values");
+  assert.ok(testState.notificationDelivery.lastAcceptedAt >= testState.notificationDelivery.lastAttemptAt,
+    "The test records native API acceptance after its attempt");
+  assert.equal(testState.account, null, "Testing a notification does not require or simulate a website login");
+  assert.equal(testState.settings.enabled, false, "Testing a notification leaves monitoring paused");
+  assert.equal(testState.settings.notificationsEnabled, false, "The explicit test leaves automatic notification settings unchanged");
+  assert.deepEqual(testState.events, beforeReload.events, "A test notification does not create a friend transition");
+  assert.equal(apiRequests.length, 0, "Testing a notification performs no VRChat API requests");
+  assert.equal(await evaluate(dashboard.sessionId, "chrome.notifications.clear('vrc:notification-test')"), true,
+    "The native test notification can be cleared before testing automatic friend alerts");
   const directStatus = await evaluate(dashboard.sessionId,
     "fetch('https://vrchat.com/api/1/auth/user', { credentials: 'include', cache: 'no-store' }).then(response => response.status)");
   assert.equal(directStatus, 403, "A direct extension request is rejected despite an existing website session");
@@ -243,6 +285,11 @@ try {
   const previousDocument = await evaluate(website.sessionId, "performance.timeOrigin");
   await send("Page.reload", { ignoreCache: true }, website.sessionId);
   await waitFor(website.sessionId, `performance.timeOrigin !== ${previousDocument} && document.readyState === 'complete'`, "website reload");
+  // Resume only after navigation finishes so the newly scheduled alarm cannot
+  // encounter an intentionally loading fixture and trigger retry throttling.
+  const resumed = await evaluate(dashboard.sessionId,
+    "chrome.runtime.sendMessage({ type: 'updateSettings', settings: { enabled: true, notificationsEnabled: true } })");
+  assert.equal(resumed.ok, true, "Normal monitoring and friend alerts were restored through the UI command");
   // The missing-bridge check did not reach the API, so reloading the website
   // allows an immediate retry. No clock, storage, runtime or fetch is replaced.
   await evaluate(dashboard.sessionId, "document.getElementById('refreshButton').click()");
@@ -269,10 +316,59 @@ try {
   const stored = await evaluate(dashboard.sessionId, "chrome.storage.local.get(null).then(value => JSON.stringify(value))");
   assert.ok(!stored.includes(privateMarker) && !stored.includes(fixtureCookie) && !stored.includes("session-present"),
     "Only sanitized account/friend data was stored; cookies and extra payload fields were discarded");
+
+  // Choose rules through the same runtime commands as the actual extension UI.
+  // Swap one online friend and the offline friend in the HTTPS fixture only.
+  // The real Chrome alarm must discover both transitions with the UI closed.
+  const leaving = roster[0];
+  const entering = roster[101];
+  for (const [friend, online, offline] of [[leaving, false, true], [entering, true, false]]) {
+    const reply = await evaluate(dashboard.sessionId,
+      `chrome.runtime.sendMessage(${JSON.stringify({ type: "setRule", accountId, friendId: friend.id, online, offline })})`);
+    assert.equal(reply.ok, true, "A real background command accepted the selected friend's notification rule");
+  }
+  assert.equal(await evaluate(dashboard.sessionId, "chrome.notifications.getPermissionLevel()"), "granted",
+    "The installed extension has native notification permission in its disposable profile");
+  assert.deepEqual(await evaluate(dashboard.sessionId, "chrome.notifications.getAll()"), {},
+    "The first silent synchronization did not create desktop notifications");
+  const baselineRequestCount = apiRequests.length;
+  const beforeAutomatic = await evaluate(dashboard.sessionId, stateExpression);
+  assert.equal(beforeAutomatic.settings.enabled, true, "Automatic monitoring is enabled");
+  assert.equal(beforeAutomatic.settings.intervalMinutes, 1, "The test uses the real one-minute polling interval");
+  const alarm = await evaluate(dashboard.sessionId, "chrome.alarms.get('vrc-friends-sync')");
+  assert.ok(alarm?.scheduledTime >= beforeAutomatic.connection.nextAttemptAt,
+    "The real extension scheduled its next Chrome alarm");
+  identity.onlineFriends = [...roster.slice(1, 101).map((friend) => friend.id), entering.id];
+  identity.offlineFriends = [leaving.id];
+  await send("Target.closeTarget", { targetId: dashboard.targetId });
+  console.log("Waiting for a real one-minute Chrome alarm with the extension dashboard closed...");
+  await waitForFixture(() => apiRequests.slice(baselineRequestCount).some((request) =>
+    request.path === "/api/1/auth/user" && request.status === 200), "automatic background synchronization");
+
+  const reopened = await page(`chrome-extension://${extensionId}/dashboard.html`);
+  await waitFor(reopened.sessionId,
+    `${stateExpression}.then(state => state?.connection?.status === 'connected' && state.events.length === 2)`,
+    "automatic transitions were recorded while the dashboard was closed");
+  const automatic = await evaluate(reopened.sessionId, stateExpression);
+  assert.ok(automatic.connection.lastSuccessAt > beforeAutomatic.connection.lastSuccessAt,
+    "The observed status changes came from a later automatic synchronization");
+  assert.deepEqual(automatic.events.map(({ friendId, online }) => ({ friendId, online })).sort((a, b) => a.friendId.localeCompare(b.friendId)),
+    [{ friendId: leaving.id, online: false }, { friendId: entering.id, online: true }],
+    "Only the two actual online/offline transitions were recorded");
+  assert.equal(automatic.notificationWarning, null, "Native notifications did not fail silently");
+  assert.equal(automatic.notificationDelivery.status, "accepted", "Automatic friend notification delivery reports native API acceptance");
+  assert.equal(automatic.notificationDelivery.source, "friend", "Automatic delivery replaces the earlier test diagnostic");
+  assert.equal(automatic.notificationDelivery.permission, "granted", "Automatic delivery used the actual extension permission");
+  const expectedNotifications = automatic.events.map((event) => `vrc:${event.id}`).sort();
+  await waitFor(reopened.sessionId,
+    `chrome.notifications.getAll().then(value => ${JSON.stringify(expectedNotifications)}.every(id => Object.hasOwn(value, id)))`,
+    "Chrome registered both automatic desktop notifications");
+  const notificationIds = await evaluate(reopened.sessionId, "chrome.notifications.getAll().then(value => Object.keys(value).sort())");
+  assert.deepEqual(notificationIds, expectedNotifications, "The native notification registry contains both selected friend alerts exactly once");
   assert.deepEqual(browserErrors, [], "No uncaught exceptions in the real extension dashboard or website page");
 
-  console.log("Installed-extension session smoke passed: actual MV3 loading, existing-tab reload, direct-origin 403, website-origin HttpOnly cookie authentication, full pagination and sanitized storage.");
-  console.log("Scope: disposable profile and loopback-only synthetic HTTPS; this does not verify a real VRChat account or its current server policies.");
+  console.log("Installed-extension session smoke passed: actual MV3 loading, explicit native notification test while logged out and paused, existing-tab reload, direct-origin 403, website-origin HttpOnly cookie authentication, full pagination, sanitized storage, real background alarm and native online/offline notification registration.");
+  console.log("Scope: disposable profile and loopback-only synthetic HTTPS. Notification registration is checked through Chrome's real API; this does not verify visible Windows banners, notification sounds, a real VRChat account or its current server policies.");
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

@@ -78,12 +78,16 @@ const fixture = {
     { id: "demo-event-2", friendId: friendIds[2], name: unsafeName, online: false, at: fixtureTime - 120000 },
   ],
   notificationWarning: null,
+  notificationDelivery: { status: "idle", source: null, lastAttemptAt: null, lastAcceptedAt: null, permission: "unknown" },
 };
 const preload = `(() => {
   const state = ${JSON.stringify(fixture)};
   const messages = [];
   const listeners = [];
-  globalThis.__smoke = { state, messages, emit: () => listeners.forEach(listener => listener({}, 'local')) };
+  globalThis.__smoke = {
+    state, messages, notificationResult: 'accepted', holdNotification: false, releaseNotification: null,
+    emit: () => listeners.forEach(listener => listener({}, 'local')),
+  };
   Object.defineProperty(globalThis, 'chrome', { configurable: true, value: {
     runtime: { sendMessage: async message => {
       messages.push(structuredClone(message));
@@ -94,6 +98,17 @@ const preload = `(() => {
         state.rules[message.friendId] = { online: message.online, offline: message.offline };
       } else if (message.type === 'clearHistory') {
         state.events = [];
+      } else if (message.type === 'testNotification') {
+        if (__smoke.holdNotification) await new Promise(resolve => { __smoke.releaseNotification = resolve; });
+        __smoke.releaseNotification = null;
+        const status = __smoke.notificationResult;
+        const at = Date.now();
+        state.notificationDelivery = {
+          status, source: 'test', lastAttemptAt: at,
+          lastAcceptedAt: status === 'accepted' ? at : state.notificationDelivery.lastAcceptedAt,
+          permission: status === 'blocked' ? 'denied' : status === 'accepted' ? 'granted' : 'unknown',
+        };
+        state.notificationWarning = status === 'accepted' ? null : '浏览器通知不可用；状态与本地记录仍会更新。';
       } else if (!['getState', 'refresh', 'openLogin', 'openDashboard'].includes(message.type)) {
         throw new Error('Unexpected UI message');
       }
@@ -183,6 +198,7 @@ try {
   const sessionId = dashboard.sessionId;
   await assertPage(sessionId, "document.querySelectorAll('#friendsList .friend-row').length === 4", "Full roster rendered");
   await assertPage(sessionId, "['game','web','offline'].every(id => document.getElementById(id + 'Count').textContent === '1')", "Game/web/offline counters stay distinct");
+  await assertPage(sessionId, "document.getElementById('notificationRuleHint').textContent.includes('已设置提醒 2 位好友') && document.getElementById('notificationStatus').textContent === '尚未尝试发送通知'", "Notification panel distinguishes configured friend rules from untested delivery");
   await assertPage(sessionId, `Array.from(document.querySelectorAll('.friend-name')).some(node => node.textContent === ${JSON.stringify(unsafeName)}) && !document.querySelector('#friendsList img') && !globalThis.__injected`, "Untrusted display names render only as text");
   await evaluate(sessionId, "__smoke.state.friends[2].name = '演示好友 · 曦'; __smoke.state.events[1].name = '演示好友 · 曦'; __smoke.emit();");
   await waitFor(sessionId, "Array.from(document.querySelectorAll('#friendsList .friend-name')).some(node => node.textContent === '演示好友 · 曦')", "Synthetic screenshot labels rendered");
@@ -205,6 +221,16 @@ try {
   await waitFor(sessionId, "!__smoke.state.settings.notificationsEnabled && !document.getElementById('notificationsEnabled').disabled", "Global notification toggle updated");
   await evaluate(sessionId, "document.getElementById('toggleMonitoring').click();");
   await waitFor(sessionId, "!__smoke.state.settings.enabled && document.getElementById('toggleMonitoring').textContent === '开启监控'", "Pause rendered");
+  await assertPage(sessionId, "document.getElementById('notificationRuleHint').textContent.includes('监控已暂停') && document.getElementById('notificationRuleHint').textContent.includes('桌面通知已关闭') && !document.getElementById('testNotification').disabled", "Disabled friend notifications are explained while testing stays available");
+  await evaluate(sessionId, "__smoke.state.rules = {}; __smoke.state.notificationWarning = '浏览器通知不可用；状态与本地记录仍会更新。'; __smoke.emit();");
+  await waitFor(sessionId, "document.getElementById('notificationRuleHint').textContent.includes('已设置提醒 0 位好友') && document.getElementById('notificationRuleHint').textContent.includes('勾选「上线」或「离线」')", "Zero rules explicitly require selecting friend transitions");
+  await evaluate(sessionId, "__smoke.holdNotification = true; document.getElementById('testNotification').click(); document.getElementById('testNotification').click();");
+  await assertPage(sessionId, "__smoke.messages.filter(message => message.type === 'testNotification').length === 1 && document.getElementById('testNotification').disabled && document.getElementById('testNotification').getAttribute('aria-busy') === 'true'", "Pending test notification prevents repeated clicks");
+  await evaluate(sessionId, "__smoke.holdNotification = false; __smoke.releaseNotification();");
+  await waitFor(sessionId, "document.getElementById('notificationStatus').textContent.startsWith('浏览器已接受测试通知') && !document.getElementById('testNotification').disabled", "Test submission result shown and test button restored");
+  await assertPage(sessionId, "document.getElementById('notificationStatus').textContent.includes('最近尝试') && document.getElementById('notificationWarning').hidden && ['系统通知中心', '横幅', '勿扰'].every(text => document.getElementById('notificationHelp').textContent.includes(text))", "Accepted delivery clears old warnings and guides banner troubleshooting without claiming display");
+  await assertPage(sessionId, "!__smoke.state.settings.enabled && !__smoke.state.settings.notificationsEnabled && Object.keys(__smoke.state.rules).length === 0 && __smoke.state.events.length === 2", "Test notification does not change monitoring, friend rules or history");
+  assert.deepEqual(await evaluate(sessionId, "__smoke.messages.find(message => message.type === 'testNotification')"), { type: "testNotification" }, "Delivery test needs no account or friend data");
   await evaluate(sessionId, "document.getElementById('refreshButton').click();");
   await waitFor(sessionId, "__smoke.messages.some(message => message.type === 'refresh') && !document.getElementById('refreshButton').disabled", "Manual sync remains accessible while paused");
   await evaluate(sessionId, "document.getElementById('openLoginButton').click();");
@@ -224,6 +250,11 @@ try {
   await evaluate(sessionId, `__smoke.state.events = ${JSON.stringify(fixture.events)}; __smoke.state.connection.status = 'auth_required'; __smoke.emit();`);
   await waitFor(sessionId, "document.getElementById('accountName').textContent === '未连接账号' && document.querySelectorAll('#friendsList .friend-row').length === 0", "Expired authentication hides retained account data");
   await assertPage(sessionId, "document.querySelectorAll('#historyList .history-row').length === 0 && document.getElementById('friendsSearch').value === '' && document.getElementById('historySearch').value === ''", "Expired authentication clears history and search context");
+  await evaluate(sessionId, "__smoke.notificationResult = 'blocked'; document.getElementById('testNotification').click();");
+  await waitFor(sessionId, "document.getElementById('notificationStatus').dataset.status === 'blocked' && !document.getElementById('testNotification').disabled", "Notification permission test works without a signed-in account");
+  await assertPage(sessionId, "!document.getElementById('notificationWarning').hidden && document.getElementById('notificationStatus').textContent.includes('权限未开启') && document.getElementById('notificationRuleHint').textContent.includes('测试通知无需登录')", "Delivery failure remains visible after account data is hidden");
+  await evaluate(sessionId, "__smoke.notificationResult = 'failed'; document.getElementById('testNotification').click();");
+  await waitFor(sessionId, "document.getElementById('notificationStatus').dataset.status === 'failed' && !document.getElementById('testNotification').disabled", "Generic submission failure is distinct from denied permission");
 
   const popup = await page("popup", 390, 740);
   await assertPage(popup.sessionId, "document.querySelectorAll('#friendsList .friend-row').length === 2 && document.getElementById('selectedCount').textContent === '2'", "Popup shows followed friends");
@@ -233,12 +264,15 @@ try {
   await waitFor(popup.sessionId, "__smoke.messages.some(message => message.type === 'openDashboard')", "Popup opens full dashboard");
   await evaluate(popup.sessionId, "__smoke.state.connection.status = 'auth_required'; __smoke.emit();");
   await waitFor(popup.sessionId, "document.getElementById('accountName').textContent === '未连接账号' && document.querySelectorAll('#friendsList .friend-row').length === 0", "Popup also hides expired-session data");
+  await evaluate(popup.sessionId, "document.getElementById('testNotification').click();");
+  await waitFor(popup.sessionId, "__smoke.messages.some(message => message.type === 'testNotification') && document.getElementById('notificationStatus').textContent.startsWith('浏览器已接受测试通知') && !document.getElementById('testNotification').disabled", "Popup can test delivery without account synchronization");
+  await assertPage(popup.sessionId, "document.documentElement.scrollWidth <= innerWidth && document.querySelectorAll('#friendsList .friend-row').length === 0", "Notification result keeps the popup narrow and account data hidden");
 
   assert.deepEqual(runtimeErrors, [], "No uncaught browser errors");
   assert.deepEqual(unexpectedRequests, [], "UI never contacted a non-fixture endpoint");
-  console.log("Offline Chrome UI smoke passed: real popup/dashboard rendering, search, account-scoped rules, settings, confirmation, auth hiding and safe display names.");
+  console.log("Offline Chrome UI smoke passed: real popup/dashboard rendering, notification test controls and diagnostics, search, account-scoped rules, settings, confirmation, auth hiding and safe display names.");
   console.log("Synthetic previews: artifacts/preview/browser-extension-*-synthetic.png");
-  console.log("Scope: mocked runtime only; installed-extension authentication and real OS notifications require manual validation.");
+  console.log("Scope: mocked runtime only; real extension API coverage is in smoke:session, visible OS banners still require manual validation.");
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

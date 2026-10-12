@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError, createApi } from '../api.js';
-import { MINUTE, ROSTER_INTERVAL, emptyState, isUserId, readIdentity, restoreState } from '../core.js';
+import { MINUTE, ROSTER_INTERVAL, emptyState, isUserId, readIdentity, restoreState, publicState } from '../core.js';
 import { Monitor } from '../monitor.js';
 
 // Synthetic identities only. These scenarios exercise persisted state across
@@ -101,6 +101,40 @@ test('ordinary worker suspension preserves the baseline and never replays a save
   await worker.tick();
   assert.deepEqual(h.notices.map(event => event.online), [true, false]);
   assert.equal(h.disk.accounts[OWNER_A].events.length, 2);
+});
+
+test('a fresh manual refresh records and notifies a transition before the next alarm without consuming it silently', async () => {
+  const h = harness();
+  h.setTime(T0 + 31_000);
+  h.source.raw = payload(OWNER_A, 'game');
+  const worker = h.worker();
+  const state = await worker.tick({ manual: true });
+  assert.equal(state.friends[0].state, 'game');
+  assert.equal(state.events.length, 1);
+  assert.equal(state.events[0].online, true);
+  assert.equal(h.notices.length, 1);
+  assert.equal(state.notificationDelivery.status, 'accepted');
+  assert.equal(state.notificationDelivery.source, 'friend');
+
+  h.advance(MINUTE);
+  await worker.tick();
+  assert.equal(h.calls.current, 2);
+  assert.equal(h.disk.accounts[OWNER_A].events.length, 1);
+  assert.equal(h.notices.length, 1, 'the following alarm does not repeat the observed transition');
+});
+
+test('manual refresh still requires both the global switch and the matching friend rule to notify', async () => {
+  for (const suppressWith of ['global', 'rule']) {
+    const saved = connectedState();
+    if (suppressWith === 'global') saved.settings.notificationsEnabled = false;
+    else saved.accounts[OWNER_A].rules[FRIEND].online = false;
+    const h = harness({ saved });
+    h.source.raw = payload(OWNER_A, 'game');
+    const result = await h.worker().tick({ manual: true });
+    assert.equal(result.events.length, 1);
+    assert.deepEqual(h.notices, []);
+    assert.equal(result.notificationDelivery.status, 'idle');
+  }
 });
 
 test('a browser cold start establishes a silent baseline before reporting later transitions', async () => {
@@ -462,22 +496,145 @@ test('a website account switch during roster pagination cannot commit mixed acco
   assert.deepEqual(h.notices, []);
 });
 
-test('simultaneous alarms and popup refresh share one synchronization and one notification', async () => {
+for (const manualFirst of [false, true]) {
+  test(`simultaneous alarms and popup refresh share one synchronization and notification when ${manualFirst ? 'manual refresh' : 'the alarm'} starts first`, async () => {
+    const h = harness();
+    const started = deferred();
+    const completion = deferred();
+    h.source.current = async () => { started.resolve(); return completion.promise; };
+    const worker = h.worker();
+    const first = worker.tick({ manual: manualFirst });
+    await started.promise;
+    const second = worker.tick({ manual: !manualFirst });
+    const third = worker.tick();
+    completion.resolve(readIdentity(payload(OWNER_A, 'game')));
+    await Promise.all([first, second, third]);
+    assert.equal(h.calls.current, 1);
+    assert.equal(h.calls.roster, 0);
+    assert.equal(h.notices.length, 1);
+    assert.equal(h.disk.accounts[OWNER_A].events.length, 1);
+  });
+}
+
+test('an explicit notification test works while logged out, paused, or globally disabled without changing monitoring', async () => {
+  const paused = connectedState();
+  paused.settings.enabled = false;
+  paused.connection.status = 'paused';
+  paused.connection.nextAttemptAt = null;
+  const disabled = connectedState();
+  disabled.settings.notificationsEnabled = false;
+  const loggedOut = connectedState();
+  loggedOut.activeAccountId = null;
+  loggedOut.connection.status = 'auth_required';
+  for (const saved of [emptyState(), loggedOut, paused, disabled]) {
+    const h = harness({ saved });
+    const worker = h.worker();
+    await worker.ready();
+    const before = structuredClone(worker.state);
+    const sends = [];
+    worker.notify = async (change, options) => { sends.push({ change, options }); return { permission: 'granted' }; };
+    const result = await worker.testNotification();
+    assert.deepEqual(sends, [{ change: null, options: { test: true } }]);
+    assert.deepEqual(h.calls, { current: 0, roster: 0 });
+    assert.deepEqual(h.deadlines, [], 'testing a notification does not reschedule synchronization');
+    assert.deepEqual(h.disk.settings, before.settings);
+    assert.deepEqual(h.disk.accounts, before.accounts);
+    assert.deepEqual(h.disk.connection, before.connection);
+    assert.deepEqual(result.notificationDelivery, {
+      status: 'accepted', source: 'test', lastAttemptAt: h.now, lastAcceptedAt: h.now, permission: 'granted',
+    });
+    assert.equal(result.notificationWarning, null);
+  }
+});
+
+test('notification diagnostics persist safe failures, recover after permission is granted, and retain the last acceptance time', async () => {
   const h = harness();
-  const started = deferred();
-  const completion = deferred();
-  h.source.current = async () => { started.resolve(); return completion.promise; };
   const worker = h.worker();
-  const first = worker.tick();
-  await started.promise;
-  const second = worker.tick({ manual: true });
-  const third = worker.tick();
-  completion.resolve(readIdentity(payload(OWNER_A, 'game')));
-  await Promise.all([first, second, third]);
-  assert.equal(h.calls.current, 1);
-  assert.equal(h.calls.roster, 0);
-  assert.equal(h.notices.length, 1);
-  assert.equal(h.disk.accounts[OWNER_A].events.length, 1);
+  worker.notify = async () => { throw Object.assign(new Error('Synthetic private diagnostic text'), { kind: 'blocked', permission: 'denied' }); };
+  let result = await worker.testNotification();
+  assert.deepEqual(result.notificationDelivery, {
+    status: 'blocked', source: 'test', lastAttemptAt: h.now, lastAcceptedAt: null, permission: 'denied',
+  });
+  assert.ok(result.notificationWarning.includes('禁用'));
+  assert.equal(JSON.stringify(h.disk).includes('Synthetic private diagnostic text'), false);
+
+  h.advance(5000);
+  worker.notify = async () => ({ permission: 'granted' });
+  result = await worker.testNotification();
+  const acceptedAt = h.now;
+  assert.equal(result.notificationDelivery.status, 'accepted');
+  assert.equal(result.notificationDelivery.lastAcceptedAt, acceptedAt);
+  assert.equal(result.notificationWarning, null);
+
+  h.advance(5000);
+  worker.notify = async () => { throw Object.assign(new Error('Synthetic browser failure text'), { kind: 'unrecognized', permission: 'untrusted' }); };
+  result = await worker.testNotification();
+  assert.deepEqual(result.notificationDelivery, {
+    status: 'failed', source: 'test', lastAttemptAt: h.now, lastAcceptedAt: acceptedAt, permission: 'unknown',
+  });
+  assert.ok(result.notificationWarning.includes('未能创建'));
+  assert.equal(result.connection.status, 'connected', 'notification errors do not create a connection failure');
+  assert.equal(JSON.stringify(h.disk).includes('Synthetic browser failure text'), false);
+  assert.deepEqual(restoreState(h.disk).notificationDelivery, result.notificationDelivery);
+  assert.deepEqual(h.calls, { current: 0, roster: 0 });
+  assert.deepEqual(h.deadlines, []);
+});
+
+test('a rejected friend notification leaves the saved observations intact and is not replayed after worker recovery', async () => {
+  const secondFriend = 'usr_synthetic_friend_two';
+  const saved = connectedState();
+  saved.accounts[OWNER_A].friends.push({ id: secondFriend, name: 'Synthetic friend two', state: 'offline' });
+  saved.accounts[OWNER_A].rules[secondFriend] = { online: true, offline: true };
+  const h = harness({ saved });
+  h.source.raw = payload(OWNER_A, 'game');
+  h.source.raw.friends.push(secondFriend);
+  h.source.raw.onlineFriends.push(secondFriend);
+  let attempts = 0;
+  const worker = h.worker();
+  worker.notify = async () => {
+    attempts++;
+    assert.equal(h.disk.accounts[OWNER_A].events.length, 2, 'both observations are saved before attempting notification');
+    throw Object.assign(new Error('Synthetic denied notification'), { kind: 'blocked', permission: 'denied' });
+  };
+  const result = await worker.tick({ manual: true });
+  assert.equal(attempts, 1, 'a delivery failure stops the rest of this notification batch');
+  assert.equal(result.connection.status, 'connected');
+  assert.equal(result.connection.failures, 0);
+  assert.equal(result.notificationDelivery.source, 'friend');
+  assert.equal(result.notificationDelivery.status, 'blocked');
+  assert.equal(result.events.length, 2);
+
+  h.advance(MINUTE);
+  const resumed = h.worker();
+  await resumed.recover();
+  await resumed.tick();
+  assert.equal(h.disk.accounts[OWNER_A].events.length, 2);
+  assert.deepEqual(h.notices, [], 'a restart must not replay the previously rejected transition');
+});
+
+test('persisted notification diagnostics accept only known fields and finite valid timestamps', () => {
+  const saved = connectedState();
+  saved.notificationWarning = 'Synthetic raw error text';
+  saved.notificationDelivery = {
+    status: 'accepted', source: 'test', lastAttemptAt: T0, lastAcceptedAt: T0, permission: 'granted',
+    rawError: 'Synthetic response text', arbitraryField: ['ignored'],
+  };
+  const restored = restoreState(saved);
+  const visible = publicState(restored, T0 + MINUTE);
+  assert.deepEqual(visible.notificationDelivery, {
+    status: 'accepted', source: 'test', lastAttemptAt: T0, lastAcceptedAt: T0, permission: 'granted',
+  });
+  assert.equal(restored.notificationWarning, null, 'successful delivery clears a stale legacy warning on restore');
+  assert.equal(JSON.stringify(restored).includes('Synthetic raw error text'), false);
+  assert.equal(JSON.stringify(restored).includes('Synthetic response text'), false);
+
+  for (const invalidTime of [NaN, Infinity, -1, '2026-10-12', 8.64e15 + 1]) {
+    saved.notificationDelivery = {
+      status: 'unexpected', source: 'unexpected', permission: 'unexpected',
+      lastAttemptAt: invalidTime, lastAcceptedAt: invalidTime,
+    };
+    assert.deepEqual(restoreState(saved).notificationDelivery, emptyState().notificationDelivery);
+  }
 });
 
 test('pausing cancels a pending automatic commit, while a later manual snapshot stays paused and silent', async () => {

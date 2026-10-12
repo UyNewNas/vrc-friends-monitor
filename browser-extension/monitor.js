@@ -1,6 +1,7 @@
 import {
   MINUTE, ROSTER_INTERVAL, MAX_EVENTS, MAX_ACCOUNTS,
   restoreState, normalizeSettings, makeSnapshot, changesBetween, retryDelay, publicState, isUserId, errorDetails,
+  normalizeNotificationDelivery, NOTIFICATION_WARNINGS,
 } from './core.js';
 import { ApiError } from './api.js';
 
@@ -83,7 +84,10 @@ export class Monitor {
       if (manual && !websiteNotReady && connection.lastAttemptAt !== null && now - connection.lastAttemptAt < 30_000) return null;
       if (!manual && connection.nextAttemptAt !== null && now < connection.nextAttemptAt) return null;
       const active = this.state.accounts[this.state.activeAccountId];
-      const silent = baseline || manual || !settings.enabled || connection.stale || connection.status !== 'connected' ||
+      // An explicit refresh must not consume a genuine transition silently.
+      // Initial, interrupted, paused, or stale observations still establish a
+      // new baseline so recovery cannot generate a backlog of old alerts.
+      const silent = baseline || !settings.enabled || connection.stale || connection.status !== 'connected' ||
         !active?.lastSyncAt || now - active.lastSyncAt > settings.intervalMinutes * MINUTE * 2 + 15_000;
       connection.status = 'syncing';
       connection.message = '正在同步好友状态…';
@@ -144,12 +148,7 @@ export class Monitor {
           for (const change of changes) {
             const rule = account.rules[change.friendId];
             if (!(change.online ? rule?.online : rule?.offline)) continue;
-            try { await this.notify(change); }
-            catch {
-              this.state.notificationWarning = '浏览器通知不可用；状态与本地记录仍会更新。';
-              await this.save(structuredClone(this.state));
-              break;
-            }
+            if (!await this.deliverNotification(change)) break;
           }
         }
       });
@@ -176,6 +175,38 @@ export class Monitor {
         await this.persist();
       });
     }
+    return this.getState();
+  }
+
+  // Call only while holding the mutation queue. Saving delivery results must
+  // not move synchronization deadlines or enqueue a second mutation.
+  async deliverNotification(change, { test = false } = {}) {
+    const delivery = {
+      ...this.state.notificationDelivery,
+      source: test ? 'test' : 'friend',
+      lastAttemptAt: this.now(),
+      permission: 'unknown',
+    };
+    let accepted = false;
+    try {
+      const result = await this.notify(change, { test });
+      delivery.status = 'accepted';
+      delivery.permission = result?.permission;
+      delivery.lastAcceptedAt = this.now();
+      this.state.notificationWarning = null;
+      accepted = true;
+    } catch (error) {
+      delivery.status = error?.kind === 'blocked' ? 'blocked' : 'failed';
+      delivery.permission = error?.permission;
+      this.state.notificationWarning = NOTIFICATION_WARNINGS[delivery.status];
+    }
+    this.state.notificationDelivery = normalizeNotificationDelivery(delivery);
+    await this.save(structuredClone(this.state));
+    return accepted;
+  }
+
+  async testNotification() {
+    await this.mutate(() => this.deliverNotification(null, { test: true }));
     return this.getState();
   }
 
