@@ -48,6 +48,10 @@ jobs:
         run: npm run check
       - name: Run offline behavior tests
         run: npm test
+      - name: Install Chinese fonts for the synthetic browser preview
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
       - name: Exercise popup and dashboard with a synthetic runtime
         run: npm run smoke
       - name: Upload synthetic UI previews
