@@ -18,7 +18,8 @@ dotnet publish $projectPath -c Release -r win-x64 --self-contained true --no-res
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
 # Copy only these files. Never archive the checkout, publish folder, or user profile.
 Copy-Item -LiteralPath (Join-Path $publishDir 'VRChatFriendNotifier.exe') -Destination $packageRoot
-Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE'),(Join-Path $repoRoot 'README.md'),(Join-Path $repoRoot 'docs/QUICKSTART.txt') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE'),(Join-Path $repoRoot 'docs/QUICKSTART.txt') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $repoRoot 'docs/WINDOWS_CLIENT.md') -Destination (Join-Path $packageRoot 'README.md')
 $asset = Join-Path $assetRoot "VRC-Friends-Monitor-$version-win-x64.zip"
 Compress-Archive -Path (Join-Path $packageRoot '*') -DestinationPath $asset -Force
 Add-Type -AssemblyName System.IO.Compression.FileSystem

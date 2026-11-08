@@ -1,21 +1,35 @@
 name: Bug report / 问题反馈
-description: Report a reproducible problem without sharing account data.
+description: 反馈浏览器扩展或 Windows 客户端的可复现问题。
 body:
   - type: markdown
     attributes:
       value: 请勿上传密码、验证码、Cookie、session.bin、settings.json 或未脱敏的好友日志。截图请遮挡好友名字和 ID。
-  - type: input
-    id: version
+  - type: dropdown
+    id: client
     attributes:
-      label: 程序版本
-      placeholder: v1.3.0
+      label: 使用的版本形式
+      options:
+        - 浏览器扩展（Chrome / Edge）
+        - Windows 客户端
     validations:
       required: true
   - type: input
-    id: windows
+    id: version
     attributes:
-      label: Windows 版本
-      placeholder: Windows 11 x64
+      label: 扩展或程序版本
+      placeholder: 扩展 0.1.2 / Windows 客户端 1.4.2
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 浏览器与操作系统
+      placeholder: Chrome / Edge 及版本号，Windows 版本；桌面客户端填写 Windows 版本即可
+  - type: input
+    id: connection
+    attributes:
+      label: 连接提示（如有）
+      description: 只填写面板显示的提示或 HTTP 状态码，不粘贴完整接口响应。
   - type: textarea
     id: reproduce
     attributes:
